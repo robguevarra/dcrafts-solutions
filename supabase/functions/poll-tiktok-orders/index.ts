@@ -44,23 +44,33 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 /**
- * Generates a TikTok Shop API v2 HMAC-SHA256 signed URL.
- * Algorithm: sort params alphabetically, concatenate as key+value,
- * wrap with path and app_secret, then SHA256-sign.
+ * Generates a TikTok Shop API v202309 HMAC-SHA256 signed URL.
+ *
+ * v202309 signing algorithm for POST requests:
+ *   1. Collect URL query params (app_key, timestamp, shop_id)
+ *   2. Sort all query params alphabetically
+ *   3. Concatenate as: path + key1value1key2value2... + app_secret
+ *   4. SHA256-HMAC sign with app_secret as the key
+ *
+ * Note: For POST endpoints, the body is NOT included in the signature.
+ * Only query string params are signed. Body filters go in the JSON body.
+ *
+ * @see https://partner.tiktokshop.com/docv2/page/650a56d4defece02be6dce41
  */
 async function buildSignedUrl(
   path: string,
-  params: Record<string, string | number>
+  queryParams: Record<string, string | number>
 ): Promise<string> {
   const timestamp = Math.floor(Date.now() / 1000);
   const allParams: Record<string, string> = {
     app_key: TTS_APP_KEY,
     timestamp: String(timestamp),
     ...Object.fromEntries(
-      Object.entries(params).map(([k, v]) => [k, String(v)])
+      Object.entries(queryParams).map(([k, v]) => [k, String(v)])
     ),
   };
 
+  // Sort keys, concatenate key+value pairs (no separators, no URL encoding)
   const sorted = Object.keys(allParams)
     .sort()
     .map((k) => `${k}${allParams[k]}`)
@@ -103,7 +113,12 @@ interface TikTokSearchResponse {
 
 /**
  * Fetches one page of orders from TikTok API for a given status.
- * Window: last 15 minutes (aligns with cron interval).
+ *
+ * v202309 key points:
+ *  - shop_id goes in the QUERY STRING (gets signed)
+ *  - order_status + time filters go in the POST BODY (not signed)
+ *  - Time params use _ge (>=) and _lt (<), not _from/_to
+ *  - 15-minute window aligns with cron interval
  */
 async function fetchOrdersForStatus(
   shopId: string,
@@ -113,23 +128,24 @@ async function fetchOrdersForStatus(
   const now = Math.floor(Date.now() / 1000);
   const fifteenMinutesAgo = now - 15 * 60;
 
+  // Only shop_id in query string (gets signed); all filters in POST body
   const url = await buildSignedUrl("/order/202309/orders/search", {
     shop_id: shopId,
-    order_status: status,
-    update_time_from: fifteenMinutesAgo,
-    update_time_to: now,
-    page_size: 50,
   });
 
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      // NOTE: In production, replace "" with the OAuth access token for the shop.
-      // For Phase 1 shadow testing, the API may return limited data without a token.
       "x-tts-access-token": Deno.env.get("TIKTOK_ACCESS_TOKEN") ?? "",
     },
-    body: JSON.stringify({}),
+    // v202309: these params belong in the body, NOT the query string
+    body: JSON.stringify({
+      order_status: status,
+      update_time_ge: fifteenMinutesAgo,  // was: update_time_from (wrong)
+      update_time_lt: now,                 // was: update_time_to (wrong)
+      page_size: 50,
+    }),
   });
 
   if (!res.ok) {

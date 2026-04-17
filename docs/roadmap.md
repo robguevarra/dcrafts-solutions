@@ -27,7 +27,7 @@
 |------|--------|-------|
 | T1.1 — Scaffold Next.js 15 project | ✅ Done | App Router, Tailwind v4, TypeScript strict |
 | T1.2 — Supabase schema + migrations | ✅ Done | 8 tables, all migrations applied via MCP |
-| T1.3 — Auth + role system | ⬜ Pending | Supabase Auth, `app_metadata.role` (admin/designer/qc_uploader) |
+| T1.3 — Auth + role system | ✅ Done | Supabase Auth + middleware (proxy.ts), RBAC via `app_metadata.role`, admin user created |
 | T1.4 — Feature flags seeded | ✅ Done | `shadow_mode=true`, chatbot flags = false |
 
 ### TikTok Order Ingestion
@@ -36,7 +36,7 @@
 |------|--------|-------|
 | T1.5 — Webhook receiver + HMAC verify | ✅ Done | `app/api/webhooks/tiktok/route.ts` |
 | T1.6 — Order normalize + dedup | ✅ Done | `lib/tiktok/webhook.ts`, UPSERT with conflict key |
-| T1.7 — `pg_cron` reconciliation job | ⬜ Pending | Poll GetOrderList every 15min as fallback |
+| T1.7 — `pg_cron` reconciliation job | ✅ Done | pg_cron + pg_net → poll-tiktok-orders Edge Function every 15min |
 
 ### Admin Dashboard
 
@@ -57,12 +57,12 @@
 
 ### Phase 1 Progress
 ```
-Foundation:              ███░  3/4 tasks
-TikTok Ingestion:        ██░   2/3 tasks  
+Foundation:              ████  4/4 tasks ✅
+TikTok Ingestion:        ███   3/3 tasks ✅
 Admin Dashboard:         ███   3/3 tasks ✅
 Designer KDS:            ████  4/4 tasks ✅
 ─────────────────────────────────────────
-TOTAL:                   12/14 tasks (86%)
+TOTAL:                   14/14 tasks (100%) ✅ PHASE 1 COMPLETE
 ```
 
 ---
@@ -137,8 +137,8 @@ TOTAL:                   12/14 tasks (86%)
 ## Overall Progress
 
 ```
-Phase 1  ████████████  86%
-Phase 2  ░░░░░░░░░░░░   0%
+Phase 1  ████████████ 100% ✅ Complete — Shadow Mode active
+Phase 2  ░░░░░░░░░░░░   0% (starts after Gate 1 — 7-day shadow run)
 Phase 3  ░░░░░░░░░░░░   0%
 Phase 4  ░░░░░░░░░░░░   0%  (backlog)
 ```
