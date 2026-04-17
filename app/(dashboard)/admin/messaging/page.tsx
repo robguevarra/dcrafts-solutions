@@ -303,10 +303,10 @@ function SuggestedReplyPanel({
           }}
         >
           <Sparkles size={10} />
-          AI Suggested Reply
+          Smart Reply Suggestion
         </div>
         <span className="text-xs ml-auto" style={{ color: "var(--text-dim)" }}>
-          Review before sending
+          Agent review required
         </span>
       </div>
 
@@ -477,14 +477,14 @@ export default function MessagingPage() {
           </div>
           <div className="flex items-center gap-1.5">
             <span
-              className="text-[10px] px-1.5 py-0.5 font-medium"
+              className="text-[10px] px-1.5 py-0.5 ml-auto"
               style={{
                 background: "color-mix(in srgb, var(--signal-blue) 15%, transparent)",
                 color: "var(--signal-blue)",
                 borderRadius: 3,
               }}
             >
-              LIVE — v0.1 mock
+              CONNECTED — v0.1 mock
             </span>
           </div>
         </div>

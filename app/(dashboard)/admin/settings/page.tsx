@@ -26,8 +26,8 @@ import { cn } from "@/lib/utils";
 type SectionId = "integrations" | "bot" | "notifications" | "security";
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ElementType }[] = [
-  { id: "integrations", label: "Integrations", icon: ShoppingBag },
-  { id: "bot",          label: "Bot & AI",      icon: Bot },
+  { id: "integrations", label: "Integrations",  icon: ShoppingBag },
+  { id: "bot",          label: "Assist Mode",   icon: Bot },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "security",     label: "Security",       icon: Shield },
 ];
@@ -366,20 +366,20 @@ function BotSection() {
         >
           <div className="px-5">
             <SettingRow
-              label="Shadow Mode"
-              description="All operations logged but no live messages sent. Disable for go-live."
+              label="Monitor Mode (Shadow)"
+              description="All activity logged and reviewed. No messages sent externally. Required during testing phase."
             >
               <ToggleSwitch id="toggle-shadow-mode" checked={shadowMode} onChange={setShadowMode} />
             </SettingRow>
             <SettingRow
-              label="Suggested Reply Mode"
-              description="Bot drafts replies for human review instead of auto-sending."
+              label="Agent Assist Mode"
+              description="AI drafts suggested replies for the service agent to review, edit, and approve before sending."
             >
               <ToggleSwitch id="toggle-suggest-mode" checked={suggestMode} onChange={setSuggestMode} />
             </SettingRow>
             <SettingRow
-              label="Auto-Send (Dangerous)"
-              description="Bot sends replies directly without human approval. Requires shadow mode OFF."
+              label="Full-Auto Send"
+              description="Agent sends approved replies directly. Only available with shadow mode disabled and manager-level access."
             >
               <ToggleSwitch id="toggle-auto-send" checked={autoSend} onChange={setAutoSend} />
             </SettingRow>
