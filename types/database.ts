@@ -27,6 +27,8 @@ export type Database = {
           last_activity_at: string
           order_id: string | null
           platform_conversation_id: string
+          spec_draft: Json | null
+          spec_step: string | null
           state: Database["public"]["Enums"]["conversation_state"]
         }
         Insert: {
@@ -37,6 +39,8 @@ export type Database = {
           last_activity_at?: string
           order_id?: string | null
           platform_conversation_id: string
+          spec_draft?: Json | null
+          spec_step?: string | null
           state?: Database["public"]["Enums"]["conversation_state"]
         }
         Update: {
@@ -47,6 +51,8 @@ export type Database = {
           last_activity_at?: string
           order_id?: string | null
           platform_conversation_id?: string
+          spec_draft?: Json | null
+          spec_step?: string | null
           state?: Database["public"]["Enums"]["conversation_state"]
         }
         Relationships: [

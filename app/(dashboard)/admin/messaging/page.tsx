@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
 
 type MessageRole = "buyer" | "seller" | "bot";
 type ConvStatus = "pending" | "bot_active" | "human_review" | "resolved";
-type IntentTag = "pre_order" | "spec_question" | "complaint" | "tracking" | "general";
+type IntentTag = "pre_order" | "post_order_spec" | "spec_question" | "complaint" | "tracking" | "general";
 
 interface Message {
   id: string;
@@ -143,11 +143,12 @@ const STATUS_CONFIG: Record<ConvStatus, { label: string; color: string }> = {
 };
 
 const INTENT_CONFIG: Record<IntentTag, { label: string }> = {
-  pre_order:     { label: "Pre-order" },
-  spec_question: { label: "Spec Q" },
-  complaint:     { label: "Complaint" },
-  tracking:      { label: "Tracking" },
-  general:       { label: "General" },
+  pre_order:       { label: "Pre-order" },
+  post_order_spec: { label: "Spec Collection" },
+  spec_question:   { label: "Spec Q" },
+  complaint:       { label: "Complaint" },
+  tracking:        { label: "Tracking" },
+  general:         { label: "General" },
 };
 
 function ConvRow({ conv, active, onClick }: { conv: Conversation; active: boolean; onClick: () => void }) {
@@ -511,7 +512,7 @@ export default function MessagingPage() {
         {/* Stats bar */}
         <div
           className="grid grid-cols-3 divide-x text-center py-2 border-b"
-          style={{ borderColor: "var(--border-dim)", divideBorderColor: "var(--border-dim)" }}
+          style={{ borderColor: "var(--border-dim)" }}
         >
           {[
             { label: "Pending", value: 1, color: "var(--signal-amber)" },
