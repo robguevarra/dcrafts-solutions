@@ -59,8 +59,10 @@ export interface SpecCollectorResult {
   nextStep: SpecStep
   questionToAsk: string
   updatedDraft: SpecDraft
-  /** True if the bot successfully extracted a value from this buyer message */
+  /** True if the bot successfully extracted at least one value from this buyer message */
   extracted: boolean
+  /** Only set when currentStep === 'confirm': true = buyer said YES, false = NO/change, null = unclear */
+  confirmed: boolean | null
 }
 
 // ─── Handoff ─────────────────────────────────────────────────────────────────

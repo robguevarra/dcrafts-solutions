@@ -12,16 +12,18 @@ import {
   Settings,
   Radio,
   ClipboardList,
+  FlaskConical,
 } from "lucide-react";
 import SignOutButton from "@/components/auth/SignOutButton";
 
 const NAV_ITEMS = [
-  { href: "/admin/orders", label: "Orders", icon: LayoutGrid },
-  { href: "/admin/kds", label: "KDS", icon: MonitorPlay },
+  { href: "/admin/orders",        label: "Orders",        icon: LayoutGrid },
+  { href: "/admin/kds",           label: "KDS",           icon: MonitorPlay },
   { href: "/admin/shopee-import", label: "Shopee Import", icon: ClipboardList },
-  { href: "/admin/messaging", label: "Messaging", icon: MessageSquareText },
-  { href: "/admin/stats", label: "Shadow Stats", icon: BarChart3 },
-  { href: "/admin/settings", label: "Settings", icon: Settings },
+  { href: "/admin/messaging",     label: "Messaging",     icon: MessageSquareText },
+  { href: "/admin/chatbot-test",  label: "Bot Playground", icon: FlaskConical },
+  { href: "/admin/stats",         label: "Shadow Stats",  icon: BarChart3 },
+  { href: "/admin/settings",      label: "Settings",      icon: Settings },
 ] as const;
 
 /**

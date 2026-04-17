@@ -15,7 +15,7 @@
  * 8. Return result to route handler
  */
 
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/server'
 import { detectIntent } from './intentDetector'
 import { advanceSpec, deriveQuantity } from './specCollector'
 import { checkHandoff } from './handoffDetector'
@@ -30,8 +30,8 @@ import type {
 } from './types'
 import type { Database } from '@/types/database'
 
-/** Convenience alias for the resolved Supabase client */
-type SupabaseClient = Awaited<ReturnType<typeof createClient>>
+/** Convenience alias for the service-role Supabase client (bypasses RLS — auth enforced at route level) */
+type SupabaseClient = ReturnType<typeof createServiceClient>
 type ConversationState = Database['public']['Enums']['conversation_state']
 
 // ─── DB Helpers ───────────────────────────────────────────────────────────────
@@ -182,7 +182,9 @@ export async function processMessage(
   request: ChatbotProcessRequest
 ): Promise<ChatbotProcessResult> {
   const { conversationId, buyerMessage, orderId } = request
-  const supabase = await createClient()
+  // Service role client — bypasses RLS.
+  // Auth is verified at the route handler level (session cookie or x-internal-secret).
+  const supabase = createServiceClient()
 
   // ── Load conversation state ────────────────────────────────────────────────
   const conversation = await loadConversation(supabase, conversationId)
@@ -241,7 +243,7 @@ export async function processMessage(
   }
 
   // ── Step 3: Spec collection ────────────────────────────────────────────────
-  const { nextStep, questionToAsk, updatedDraft } = await advanceSpec(
+  const { nextStep, questionToAsk, updatedDraft, confirmed: specConfirmed } = await advanceSpec(
     currentSpecStep,
     buyerMessage,
     currentDraft,
@@ -250,17 +252,13 @@ export async function processMessage(
 
   // ── Step 4: Handle confirmed spec ──────────────────────────────────────────
   if (nextStep === 'confirm' && currentSpecStep === 'confirm') {
-    // Check if buyer said YES in this message
-    const confirmed = /^(yes|oo|sige|confirm|yep|yup|sure|ok|oke|okay)$/i.test(
-      buyerMessage.trim()
-    )
-
-    if (confirmed && updatedDraft.lettersText) {
+    // specResult.confirmed is set by the unified GPT extractor (true/false/null)
+    if (specConfirmed === true && updatedDraft.lettersText) {
       await writeConfirmedSpec(
         supabase,
         updatedDraft,
         orderId ?? conversation.order_id,
-        conversation.id // buyer_id not on ConversationRow; use conversation.id as proxy
+        conversation.id
       )
       nextState = 'order_confirmation' as ConversationState
     }
