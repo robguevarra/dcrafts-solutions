@@ -1,0 +1,189 @@
+# Runbook — How to Run, Deploy & Debug
+
+---
+
+## Local Development
+
+### Prerequisites
+
+- Node.js 20+
+- npm 10+
+- Access to `.env.local` (get from project lead)
+
+### First-time setup
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Verify environment
+cat .env.local  # should have all 7 variables populated
+
+# 3. Start dev server
+npm run dev
+
+# 4. Open browser
+open http://localhost:3000
+# Should redirect to /admin/orders and show the Order Inbox
+```
+
+### Daily development
+
+```bash
+npm run dev          # Start dev server at localhost:3000
+```
+
+That's it. Supabase is cloud-hosted — no local database needed.
+
+---
+
+## Type Checking
+
+```bash
+# Full type check (excludes Node.js SDK reference folder)
+npx tsc --noEmit
+
+# Should output nothing on success (zero errors)
+```
+
+---
+
+## Database Operations
+
+### View all tables
+Go to [Supabase Table Editor](https://supabase.com/dashboard/project/qgonuztynqabujtamorm/editor)
+
+### Run SQL queries
+Go to [Supabase SQL Editor](https://supabase.com/dashboard/project/qgonuztynqabujtamorm/sql/new)
+
+### Regenerate TypeScript types after schema changes
+
+```bash
+# Option 1: Via MCP (preferred — automatic)
+# The AI agent can call mcp_supabase-mcp-server_generate_typescript_types
+
+# Option 2: Via CLI
+npx supabase gen types typescript --project-id qgonuztynqabujtamorm > types/database.ts
+```
+
+### Apply a new migration
+
+```sql
+-- Write your migration SQL, then either:
+-- Option 1: Paste into Supabase Dashboard → SQL Editor
+-- Option 2: Use MCP tool: mcp_supabase-mcp-server_apply_migration
+-- Option 3: Save to supabase/migrations/00X_description.sql and apply
+```
+
+---
+
+## Checking Feature Flags
+
+```sql
+SELECT name, enabled, description FROM feature_flags ORDER BY name;
+```
+
+### Flip shadow mode OFF (Gate 1 go-live)
+
+```sql
+-- Read the shadow-mode.md Gate 1 checklist FIRST
+UPDATE feature_flags SET enabled = false WHERE name = 'shadow_mode';
+```
+
+### Re-enable shadow mode (rollback)
+
+```sql
+UPDATE feature_flags SET enabled = true WHERE name = 'shadow_mode';
+```
+
+---
+
+## Testing the Webhook Locally
+
+To test TikTok webhooks locally, you need a public URL. Use ngrok:
+
+```bash
+# Install ngrok (one-time)
+brew install ngrok/ngrok/ngrok
+
+# Expose local port 3000
+ngrok http 3000
+# Copy the https URL, e.g. https://abc123.ngrok.io
+
+# Set as webhook URL in TikTok Partner Center:
+# https://abc123.ngrok.io/api/webhooks/tiktok
+```
+
+### Test with curl (skip HMAC for dev)
+
+```bash
+curl -X POST http://localhost:3000/api/webhooks/tiktok \
+  -H "Content-Type: application/json" \
+  -H "x-tts-signature: test" \
+  -d '{
+    "type": 1,
+    "shop_id": "test-shop",
+    "timestamp": 1713200000,
+    "data": {
+      "order_id": "TEST-001",
+      "order_status": "AWAITING_SHIPMENT",
+      "buyer_uid": "uid_test",
+      "buyer_username": "Test Buyer"
+    }
+  }'
+```
+
+> Note: HMAC verification will reject this unless `TIKTOK_WEBHOOK_SECRET` is set to empty, or you compute a real signature. Use Supabase Dashboard to insert test orders directly during development.
+
+### Insert test orders directly
+
+```sql
+INSERT INTO orders (platform, platform_order_id, buyer_name, buyer_id, status, shadow_mode, raw_payload)
+VALUES ('tiktok', 'TK-MANUAL-001', 'Test Buyer', 'uid_test_001', 'pending_spec', true, '{}');
+```
+
+---
+
+## Checking Logs
+
+### Next.js server logs
+Visible in the terminal where `npm run dev` is running.
+
+### Supabase logs
+- API logs: [Dashboard → Logs → API](https://supabase.com/dashboard/project/qgonuztynqabujtamorm/logs/edge-logs)
+- Postgres logs: [Dashboard → Logs → Database](https://supabase.com/dashboard/project/qgonuztynqabujtamorm/logs/postgres-logs)
+
+---
+
+## Deployment (Vercel)
+
+> Not yet configured. Will be set up after Gate 1.
+
+```bash
+# Build check (verify no build errors)
+npm run build
+
+# Environment variables needed in Vercel dashboard:
+# All 7 variables from docs/environment.md
+# (same as .env.local)
+```
+
+---
+
+## Common Issues
+
+### "Could not find table 'public.orders'"
+Schema migration hasn't been applied. Run `supabase/migrations/001_initial_schema.sql` in the SQL Editor.
+
+### TypeScript errors in `Node.js SDK/` folder
+This is expected if you run `tsc` without the correct config. The SDK folder is excluded in `tsconfig.json`. Use the project-scoped `npx tsc --noEmit` command.
+
+### KDS shows "OFFLINE" badge
+The Supabase Realtime subscription failed. Check:
+1. `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are correct in `.env.local`
+2. `print_jobs` table is in the `supabase_realtime` publication (verify in Dashboard → Database → Replication)
+
+### Orders not appearing after webhook
+1. Check that `TIKTOK_WEBHOOK_SECRET` matches what's configured in TikTok Partner Center
+2. Look at Next.js server logs for `[webhook/tiktok]` entries
+3. Check Supabase logs for any DB errors

@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* ── Dcrafts Design Tokens ───────────────────────────── */
+    /* Base */
+    --bg-void:    #0D1117;
+    --bg-surface: #161B22;
+    --bg-raised:  #1C2230;
+    --bg-overlay: #21262D;
+
+    /* Borders */
+    --border-dim:    #30363D;
+    --border-bright: #484F58;
+
+    /* Brand Signals */
+    --signal-amber:  #F59E0B;   /* PENDING / AWAITING SPEC */
+    --signal-green:  #22C55E;   /* COMPLETE / DONE         */
+    --signal-red:    #EF4444;   /* FLAGGED / ESCALATED     */
+    --signal-blue:   #3B82F6;   /* IN PROGRESS             */
+    --signal-gray:   #6B7280;   /* SHADOW MODE / DIMMED    */
+
+    /* Text */
+    --text-primary:   #E6EDF3;
+    --text-secondary: #8B949E;
+    --text-dim:       #484F58;
+
+    /* Motion */
+    --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    --dur-fast:    150ms;
+    --dur-base:    250ms;
+    --dur-slow:    400ms;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background-color: var(--bg-void);
+    color: var(--text-primary);
+    font-family: var(--font-inter), 'Inter', system-ui, sans-serif;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg-void); }
+  ::-webkit-scrollbar-thumb { background: var(--border-dim); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+}
+
+@layer utilities {
+  /* Status badges */
+  .badge-pending  { background: color-mix(in srgb, var(--signal-amber) 12%, transparent); color: var(--signal-amber); border: 1px solid color-mix(in srgb, var(--signal-amber) 30%, transparent); }
+  .badge-complete { background: color-mix(in srgb, var(--signal-green) 12%, transparent); color: var(--signal-green); border: 1px solid color-mix(in srgb, var(--signal-green) 30%, transparent); }
+  .badge-flagged  { background: color-mix(in srgb, var(--signal-red) 12%, transparent);   color: var(--signal-red);   border: 1px solid color-mix(in srgb, var(--signal-red) 30%, transparent); }
+  .badge-active   { background: color-mix(in srgb, var(--signal-blue) 12%, transparent);  color: var(--signal-blue);  border: 1px solid color-mix(in srgb, var(--signal-blue) 30%, transparent); }
+  .badge-shadow   { background: color-mix(in srgb, var(--signal-gray) 12%, transparent);  color: var(--signal-gray);  border: 1px solid color-mix(in srgb, var(--signal-gray) 30%, transparent); }
+
+  /* Mono font utility */
+  .font-mono-data { font-family: 'DM Mono', 'Fira Code', ui-monospace, monospace; }
+
+  /* Clickable order rows — hover without JS event handlers */
+  .order-row { cursor: pointer; }
+  .order-row:hover { background: var(--bg-raised); }
+
+  /* Sharp borders */
+  .border-dim    { border-color: var(--border-dim); }
+  .border-bright { border-color: var(--border-bright); }
+
+  /* Surface levels */
+  .surface-base    { background: var(--bg-surface); }
+  .surface-raised  { background: var(--bg-raised); }
+  .surface-overlay { background: var(--bg-overlay); }
+
+  /* Pulse animation for live indicator */
+  @keyframes live-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.4; transform: scale(0.85); }
+  }
+  .animate-live { animation: live-pulse 1.8s ease-in-out infinite; }
+
+  /* Slide-in for KDS cards */
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .animate-slide-up { animation: slide-up var(--dur-base) var(--ease-spring) both; }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
