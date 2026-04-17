@@ -168,19 +168,25 @@ Operational gate flags. Flip these to control system behavior without a code dep
 
 ## Row Level Security (RLS)
 
-RLS is enabled on all 8 tables. Current state is **scaffold** (all-access policies). Role-based policies will be implemented in **T1.3**.
+RLS is enabled on all 8 tables. **Migration `002` implemented proper role-scoped policies.**
 
-### Planned policy matrix (T1.3)
+### Live policy matrix
 
-| Table | `admin` | `designer` | `qc_uploader` |
-|-------|---------|-----------|--------------|
-| `orders` | All | SELECT (own assigned) | SELECT |
-| `print_specs` | All | SELECT | SELECT |
-| `print_jobs` | All | SELECT + UPDATE (own) | SELECT + UPDATE proof |
-| `conversations` | All | — | — |
-| `messages` | All | — | — |
-| `feature_flags` | SELECT | — | — |
-| `sms_logs` | All | — | — |
+| Table | `admin` (authenticated) | `service_role` (server) | `anon` |
+|-------|------------------------|------------------------|--------|
+| `orders` | ALL (full CRUD) | Bypasses RLS | ❌ |
+| `print_specs` | ALL | Bypasses RLS | ❌ |
+| `print_jobs` | ALL | Bypasses RLS | ❌ |
+| `feature_flags` | SELECT only | Bypasses RLS | ❌ |
+| `conversations` | ❌ (Phase 2) | Bypasses RLS | ❌ |
+| `messages` | ❌ (Phase 2) | Bypasses RLS | ❌ |
+| `sms_logs` | SELECT (audit trail) | Bypasses RLS | ❌ |
+| `pre_order_intents` | ❌ (Phase 2) | Bypasses RLS | ❌ |
+
+> **How admin check works:** `(auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'`  
+> The JWT claim is set in `auth.users.raw_app_meta_data` in Supabase Auth.
+
+> **Note on `service_role`:** Postgres's RLS is bypassed entirely for the `service_role` key — no explicit policy is needed. All server-side writes (webhooks, edge functions, cron) use the service key.
 
 ---
 
@@ -203,7 +209,7 @@ $$ LANGUAGE plpgsql SET search_path = '';  -- search_path fixed for security
 | File | Description |
 |------|-------------|
 | `supabase/migrations/001_initial_schema.sql` | All 8 tables, enums, indexes, RLS scaffold, feature flag seed data |
-| `supabase/migrations/002_fix_search_path.sql` | Security fix — sets `search_path=''` on `set_updated_at()` |
+| `supabase/migrations/002_rbac_policies_and_fk_indexes.sql` | RBAC: role-scoped RLS policies + missing FK indexes for perf |
 
 To re-apply from scratch:
 ```bash
