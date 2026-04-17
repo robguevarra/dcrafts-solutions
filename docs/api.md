@@ -73,38 +73,76 @@ A dedicated REST API (`/api/orders/[id]`) will be added in T1.9 for client-side 
 
 ---
 
-## Chatbot (Phase 2)
+## Chatbot
+
+See [chatbot.md](./chatbot.md) for full pipeline documentation.
 
 ### `POST /api/chatbot/process`
 
-**Not yet implemented.** Planned for T2.10.
+Production endpoint — intended for TikTok CS API webhooks once Partner Center is approved.
+
+**Auth:** `x-internal-secret` header = `POLL_INTERNAL_SECRET` env var  
+**Source:** `app/api/chatbot/process/route.ts`
 
 ```typescript
-// Request body
+// Request
 {
-  conversationId: string;
-  incomingMessage: string;
-  tiktokUserId: string;
+  conversationId: string;   // UUID of existing conversations row
+  buyerMessage: string;     // Raw message text from buyer (max 2000 chars)
+  orderId?: string;         // Optional — links spec to an order
 }
 
-// Response
+// Response (200)
 {
-  reply: string;
-  state: ConversationState;
-  wasSent: boolean;  // false in suggest mode
-  suggestedReply?: string;
+  suggestedReply: string;   // GPT-generated reply in Dcrafts brand voice
+  nextState: string;        // New conversations.state value
+  nextSpecStep: string;     // 'letters_text' | 'color' | 'size' | 'confirm'
+  shouldEscalate: boolean;  // True if handoff triggered
+  specDraft: {
+    lettersText?: string;   // Verbatim text to print
+    colorName?: string;     // Freeform color description
+    sizeCm?: number;        // 2 | 4 | 6 | 8
+    quantity?: number;      // Derived from lettersText (alphanumeric count)
+  };
 }
 ```
 
+**Error responses:**
+
+| Code | Reason |
+|------|--------|
+| `400` | Missing / invalid request fields |
+| `401` | Missing or wrong `x-internal-secret` |
+| `500` | Pipeline error (DB, OpenAI, conversation not found) |
+
 ---
 
-## TikTok CS API Proxy (Phase 2)
+### `GET /api/chatbot/playground-proxy`
 
-### `POST /api/tiktok/messages`
+Creates a fresh test conversation in the DB for the Bot Playground.
 
-Proxy to TikTok CS Open API. Not yet implemented (T2.2).
+**Auth:** Supabase session cookie (admin must be logged in)  
+**Source:** `app/api/chatbot/playground-proxy/route.ts`
 
-Shadow mode guard: if `shadow_mode=true`, logs the intent but does **not** call TikTok.
+```typescript
+// Response (201)
+{ conversationId: string }  // UUID of newly created conversations row
+```
+
+### `POST /api/chatbot/playground-proxy`
+
+Runs the full chatbot pipeline. Same response shape as `POST /api/chatbot/process`.
+
+**Auth:** Supabase session cookie (admin must be logged in)
+
+```typescript
+// Request
+{
+  conversationId: string;
+  buyerMessage: string;
+}
+// Response — same shape as /api/chatbot/process
+```
 
 ---
 

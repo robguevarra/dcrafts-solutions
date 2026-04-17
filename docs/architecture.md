@@ -89,22 +89,43 @@ Designer sees job with full print spec
 
 ---
 
-## Data Flow: AI Chatbot (Phase 2)
+## Data Flow: AI Chatbot Spec Collection
+
+See [chatbot.md](./chatbot.md) for full module documentation.
 
 ```
 Buyer sends TikTok message
   │
   ▼
-TikTok CS API webhook → /api/chatbot/process
+TikTok CS API webhook — POST /api/chatbot/process
+  [dev: POST /api/chatbot/playground-proxy]
   │
-  ├─ Load conversation state from DB (conversations table)
-  ├─ Detect intent (GPT-4o-mini, last 5 messages)
-  ├─ Run state machine transition
-  ├─ Generate reply (GPT-4o-mini, product catalog injected)
+  ▼
+processMessage() — lib/chatbot/index.ts
   │
-  ├─ shadow_mode=true  ──► Log only. No send.
-  ├─ chatbot_suggest_mode=true ──► Save as suggested_reply. Human approves.
-  └─ chatbot_auto_mode=true ──► Send via CS API immediately.
+  ├─ createServiceClient() ─ conversations table has no auth policy;
+  │   service role bypasses RLS. Auth checked at route handler level.
+  │
+  ├─ detectIntent()     ─ GPT-4o-mini: pre_order | post_order_spec | complaint | ...
+  │
+  ├─ checkHandoff()     ─ Keyword → explicit request → loop → GPT sentiment
+  │                        Short-circuits pipeline if escalation triggered
+  │
+  ├─ advanceSpec()      ─ Single GPT call extracts ALL spec fields at once
+  │                        Handles: "Grace po, rose gold, M" → all 3 fields captured
+  │                        Verbatim text rule: "Lets go GSW" = 9 pieces, not 3
+  │                        Resolves next missing step in order: text→color→size→confirm
+  │
+  ├─ generateReply()    ─ Answer + Redirect pattern (answer tangent + pending question)
+  │
+  ├─ shadow_mode gate   ─ feature_flags.shadow_mode (cached 60s)
+  │   true  → log + return, do NOT send to TikTok
+  │   false → return reply for TikTok CS API send (not yet wired; pending approval)
+  │
+  └─ Persist to DB
+        INSERT messages (buyer message + bot reply)
+        UPDATE conversations (state, spec_step, spec_draft)
+        On specConfirmed=true → INSERT print_specs
 ```
 
 ---
@@ -157,34 +178,48 @@ dcrafts-solutions/
 ├── app/
 │   ├── (dashboard)/
 │   │   └── admin/
-│   │       ├── layout.tsx          ← Sidebar shell
-│   │       ├── orders/page.tsx     ← Order Inbox (Server Component)
-│   │       ├── kds/page.tsx        ← Designer KDS (Client Component, Realtime)
-│   │       ├── stats/page.tsx      ← Shadow Stats + Gate 1 checklist
-│   │       ├── messaging/          ← Phase 2
-│   │       └── settings/           ← Phase 1 (feature flags UI)
+│   │       ├── layout.tsx            ← Sidebar shell
+│   │       ├── orders/page.tsx       ← Order Inbox (Server Component)
+│   │       ├── kds/page.tsx          ← Designer KDS (Client Component, Realtime)
+│   │       ├── stats/page.tsx        ← Shadow Stats + Gate 1 checklist
+│   │       ├── messaging/page.tsx    ← Messaging Studio UI
+│   │       ├── chatbot-test/page.tsx ← Bot Playground (internal test UI)
+│   │       └── settings/             ← Feature flags UI
 │   ├── api/
-│   │   └── webhooks/tiktok/route.ts  ← HMAC verify + order upsert
-│   ├── globals.css                 ← Design tokens (CSS vars)
-│   ├── layout.tsx                  ← Root layout (fonts)
-│   └── page.tsx                    ← Redirect → /admin/orders
+│   │   ├── webhooks/tiktok/route.ts        ← HMAC verify + order upsert
+│   │   └── chatbot/
+│   │       ├── process/route.ts        ← Production: x-internal-secret auth
+│   │       ├── playground-proxy/route.ts ← Dev: session cookie auth
+│   │       └── test-session/route.ts   ← Dev: creates test conversations row
+│   ├── globals.css                     ← Design tokens (CSS vars)
+│   ├── layout.tsx                      ← Root layout (fonts)
+│   └── page.tsx                        ← Redirect → /admin/orders
 ├── components/
 │   ├── layout/
-│   │   └── DashboardSidebar.tsx    ← Fixed 240px nav rail
+│   │   └── DashboardSidebar.tsx         ← Fixed 240px nav rail
 │   └── ui/
-│       └── StatusBadge.tsx         ← Order status chip
+│       └── StatusBadge.tsx              ← Order status chip
 ├── lib/
 │   ├── supabase/
-│   │   ├── client.ts               ← Browser client
-│   │   └── server.ts               ← Server + service role clients
+│   │   ├── client.ts                    ← Browser client
+│   │   └── server.ts                    ← Server + service role clients
+│   ├── chatbot/
+│   │   ├── index.ts                     ← Orchestrator (processMessage)
+│   │   ├── intentDetector.ts            ← GPT-4o-mini intent classification
+│   │   ├── specCollector.ts             ← Unified GPT spec extractor + state machine
+│   │   ├── handoffDetector.ts           ← 4-trigger escalation system
+│   │   ├── replyGenerator.ts            ← Answer + Redirect brand voice reply
+│   │   └── types.ts                     ← Shared types (SpecDraft, SpecStep, etc.)
 │   ├── tiktok/
-│   │   └── webhook.ts              ← HMAC verify, order normalizer
-│   └── utils.ts                    ← cn(), formatOrderTime(), truncate()
+│   │   └── webhook.ts                   ← HMAC verify, order normalizer
+│   └── utils.ts                         ← cn(), formatOrderTime(), truncate()
 ├── types/
-│   └── database.ts                 ← Auto-generated Supabase types
+│   └── database.ts                      ← Supabase types (manually maintained)
 ├── supabase/
 │   └── migrations/
-│       ├── 001_initial_schema.sql  ← All 8 tables, enums, RLS, seed data
-│       └── 002_fix_search_path.sql ← Security fix on set_updated_at()
-└── docs/                           ← You are here
+│       ├── 001_initial_schema.sql         ← All 8 tables, enums, RLS, seed data
+│       ├── 002_rbac_policies_and_fk.sql   ← RLS hardening, FK indexes
+│       ├── 003_messaging_tables.sql       ← conversations + messages tables
+│       └── 004_chatbot_spec_step.sql      ← spec_step + spec_draft columns
+└── docs/                                ← You are here
 ```

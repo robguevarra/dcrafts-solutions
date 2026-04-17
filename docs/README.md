@@ -19,6 +19,7 @@ The **Dcrafts Ops Platform** replaces a manual Excel-based workflow for a custom
 | [architecture.md](./architecture.md) | System design, data flow, tech decisions |
 | [database.md](./database.md) | Full schema, enums, indexes, RLS policies |
 | [api.md](./api.md) | All API routes — request/response contracts |
+| [chatbot.md](./chatbot.md) | AI chatbot pipeline, spec collection, playground |
 | [roadmap.md](./roadmap.md) | Phase-by-phase task tracker with current status |
 | [shadow-mode.md](./shadow-mode.md) | Shadow Mode strategy, gates, and go-live checklist |
 | [environment.md](./environment.md) | Environment variables and secrets guide |
@@ -31,13 +32,13 @@ The **Dcrafts Ops Platform** replaces a manual Excel-based workflow for a custom
 
 ```
 Phase 1 — Core OMS + KDS        ████████░░  80% complete
-Phase 2 — AI Chatbot             ░░░░░░░░░░   0% (starts after Phase 1)
+Phase 2 — AI Chatbot             ██████░░░░  60% complete (core pipeline live)
 Phase 3 — QC Proof + SMS         ░░░░░░░░░░   0% (starts after Phase 2)
 Phase 4 — Scale Intelligence     ░░░░░░░░░░   0% (backlog)
 ```
 
-**Immediate next tasks:**
-- [ ] T1.9 — Order Detail page  
-- [ ] T1.10 — Shopee paste ingestion tool  
-- [ ] T1.13 — Photo upload flow (QC role)  
-- [ ] T1.3 — Auth + RBAC (admin / designer / qc_uploader)
+**Current focus:**
+- [ ] TikTok CS API integration (pending Partner Center approval)
+- [ ] Color validation against 23 official colors  
+- [ ] Field change handling in confirm step ("change color to blue")
+- [ ] Auto-send enable (shadow mode → suggest mode → auto mode)
