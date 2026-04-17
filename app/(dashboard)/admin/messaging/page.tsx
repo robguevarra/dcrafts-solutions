@@ -59,76 +59,76 @@ const MOCK_CONVERSATIONS: Conversation[] = [
     buyerHandle: "@mariasantos_ph",
     orderId: "TT-20240417-001",
     status: "bot_active",
-    intent: "pre_order",
-    lastMessage: "What fonts do you have available for the tumbler?",
+    intent: "post_order_spec",
+    lastMessage: "Pwede ba uppercase yung GRACE?",
     lastAt: "2m ago",
     unread: 2,
-    botDraft: "Hi Maria! We have 12 font families available 🎨 Our most popular are **Serif Elegant**, **Script Floral**, and **Bold Block**. Which style speaks to you? I can also send photos of each option!",
+    botDraft: "Sure po! GRACE in uppercase 📝 That's 5 letters po. For the font, what style would you prefer? Classic, Playful, Elegant, or Bold? I can show you options after! ✨",
     messages: [
-      { id: "m1", role: "buyer", text: "Hello! I want to order a custom tumbler for my mom's birthday 🎂", timestamp: "10:42 AM" },
-      { id: "m2", role: "bot", text: "Hi Maria! 🌸 We'd love to help you create something special for your mom! Our tumblers are 20oz stainless steel with full-wrap UV printing. What name or message would you like on it?", timestamp: "10:42 AM" },
-      { id: "m3", role: "buyer", text: "Her name is Nanay Rosa and maybe a floral design?", timestamp: "10:45 AM" },
-      { id: "m4", role: "bot", text: "Beautiful choice! 💐 We have gorgeous floral backgrounds — tropical, watercolor, and minimalist line art. For 'Nanay Rosa', what font style do you prefer?", timestamp: "10:45 AM" },
-      { id: "m5", role: "buyer", text: "What fonts do you have available for the tumbler?", timestamp: "10:51 AM" },
+      { id: "m1", role: "buyer", text: "Hello! I ordered na po. Anong susunod?", timestamp: "10:42 AM" },
+      { id: "m2", role: "bot", text: "Hi Maria po! 🌸 Salamat sa inyong order! Para ma-process na namin yung inyong papel letters, what letters or word would you like? (e.g. GRACE, HAPPY BIRTHDAY, ROB)", timestamp: "10:42 AM" },
+      { id: "m3", role: "buyer", text: "GRACE po, para sa birthday ng friend ko", timestamp: "10:45 AM" },
+      { id: "m4", role: "bot", text: "Ang cute naman po! 📋 \"GRACE\" — that's 5 letters po. Uppercase or lowercase?", timestamp: "10:45 AM" },
+      { id: "m5", role: "buyer", text: "Pwede ba uppercase yung GRACE?", timestamp: "10:51 AM" },
     ],
   },
   {
     id: "conv_002",
     buyerName: "Joel Reyes",
-    buyerHandle: "@joelr_gamer",
+    buyerHandle: "@joelr_collector",
     orderId: "TT-20240416-089",
     status: "human_review",
     intent: "complaint",
-    lastMessage: "The colors on my order look faded compared to the preview",
+    lastMessage: "Yung 'E' sa order ko parang hindi pantay sa iba",
     lastAt: "15m ago",
     unread: 1,
     messages: [
-      { id: "m1", role: "buyer", text: "Hi, I received my order today but the colors look different from what I saw in the preview during ordering", timestamp: "9:30 AM" },
-      { id: "m2", role: "bot", text: "Hi Joel! I'm sorry to hear that — that's definitely not the experience we want for you. Can you send me a photo of the item you received alongside the order preview? This helps our QC team review quickly 📸", timestamp: "9:31 AM" },
-      { id: "m3", role: "buyer", text: "The colors on my order look faded compared to the preview", timestamp: "10:35 AM" },
+      { id: "m1", role: "buyer", text: "Hello, natanggap ko na po yung order ko pero parang may issue", timestamp: "9:30 AM" },
+      { id: "m2", role: "bot", text: "Hi Joel po! Pasensya na at nangyari ito. Pwede po bang magpadala ng photo ng natanggap ninyong letters? Para ma-review agad ng aming QC team 📸", timestamp: "9:31 AM" },
+      { id: "m3", role: "buyer", text: "Yung 'E' sa order ko parang hindi pantay sa iba", timestamp: "10:35 AM" },
     ],
   },
   {
     id: "conv_003",
     buyerName: "Anna Lim",
-    buyerHandle: "@annalim_crafts",
+    buyerHandle: "@annalim_decor",
     status: "bot_active",
-    intent: "spec_question",
-    lastMessage: "Can I put 3 names on one tumbler?",
+    intent: "pre_order",
+    lastMessage: "Magkano po per letter?",
     lastAt: "31m ago",
     unread: 0,
-    botDraft: "Yes, absolutely! You can have up to 4 names or lines of text on one tumbler. Just let me know all the names and your preferred layout (stacked vertically or spread around the tumbler) 😊",
+    botDraft: "Hi po! Our paper cut letters are priced per piece po. Size S (2cm) starts at ₱15/letter, M (4cm) at ₱25, L (6cm) at ₱40, and XL (8cm) at ₱60. We have 21 font styles and 23 colors to choose from! What letters are you planning to order? 🌸",
     messages: [
-      { id: "m1", role: "buyer", text: "Can I put 3 names on one tumbler?", timestamp: "10:19 AM" },
+      { id: "m1", role: "buyer", text: "Magkano po per letter?", timestamp: "10:19 AM" },
     ],
   },
   {
     id: "conv_004",
     buyerName: "Carlo Mendoza",
-    buyerHandle: "@carlom_ph",
+    buyerHandle: "@carlom_events",
     orderId: "TT-20240415-042",
     status: "pending",
     intent: "tracking",
-    lastMessage: "When will my order ship?",
+    lastMessage: "Kelan po madadala yung CARLO letters ko?",
     lastAt: "1h ago",
     unread: 0,
     messages: [
-      { id: "m1", role: "buyer", text: "Hi! When will my order ship? I placed it 3 days ago", timestamp: "9:05 AM" },
+      { id: "m1", role: "buyer", text: "Kelan po madadala yung CARLO letters ko? Kailangan ko siya sa Saturday for a party", timestamp: "9:05 AM" },
     ],
   },
   {
     id: "conv_005",
     buyerName: "Grace Tan",
-    buyerHandle: "@gracetan_beauty",
+    buyerHandle: "@gracetan_events",
     orderId: "TT-20240416-077",
     status: "resolved",
     intent: "general",
-    lastMessage: "Thank you so much! It's perfect 🥰",
+    lastMessage: "Ang ganda! Exactly what I wanted 🥰 Salamat!",
     lastAt: "3h ago",
     unread: 0,
     messages: [
-      { id: "m1", role: "seller", text: "Hi Grace! Your order is now ready and packed. Estimated delivery is tomorrow ✨", timestamp: "7:00 AM" },
-      { id: "m2", role: "buyer", text: "Thank you so much! It's perfect 🥰", timestamp: "7:15 AM" },
+      { id: "m1", role: "seller", text: "Hi Grace po! Ready na ang inyong GRACE letters (5 pcs, Elegant font, Rose Gold, Size M). Ipapadala na po namin today ✨", timestamp: "7:00 AM" },
+      { id: "m2", role: "buyer", text: "Ang ganda! Exactly what I wanted 🥰 Salamat!", timestamp: "7:15 AM" },
     ],
   },
 ];
@@ -640,6 +640,17 @@ export default function MessagingPage() {
             <div>
               <p className="text-[10px] mb-1" style={{ color: "var(--text-dim)" }}>STATUS</p>
               <span className="badge-pending text-[10px] px-2 py-0.5 rounded-sm">AWAITING SPEC</span>
+            </div>
+            <div>
+              <p className="text-[10px] mb-1.5" style={{ color: "var(--text-dim)" }}>SPEC PROGRESS</p>
+              <div className="space-y-1.5">
+                {(["Letters", "Case", "Font", "Color", "Size"] as const).map((s, i) => (
+                  <div key={s} className="flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ background: i < 2 ? "var(--signal-green)" : "var(--border-dim)" }} />
+                    <span className="text-[11px]" style={{ color: i < 2 ? "var(--text-primary)" : "var(--text-dim)" }}>{s}</span>
+                  </div>
+                ))}
+              </div>
             </div>
             <div>
               <p className="text-[10px] mb-1.5" style={{ color: "var(--text-dim)" }}>QUICK ACTIONS</p>
