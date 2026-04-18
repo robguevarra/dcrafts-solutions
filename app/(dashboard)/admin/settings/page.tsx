@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings,
   Bot,
@@ -18,8 +19,55 @@ import {
   Key,
   Zap,
   MessageSquareText,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// ─── TikTok OAuth config ───────────────────────────────────────────────────────
+const TIKTOK_AUTH_URL = "https://services.tiktokshop.com/open/authorize?service_id=7628648618510272277";
+const TIKTOK_CALLBACK_URL = "https://dcrafts.vercel.app/api/tiktok/callback";
+
+// ─── Auth Result Toast ────────────────────────────────────────────────────────
+function AuthToast() {
+  const params = useSearchParams();
+  const result = params.get("tiktok_auth");
+  const shop   = params.get("shop");
+  const reason = params.get("reason");
+  const [visible, setVisible] = useState(!!result);
+
+  useEffect(() => { if (result) setVisible(true); }, [result]);
+
+  if (!visible || !result) return null;
+
+  const ok = result === "success";
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -12 }}
+        className="fixed top-4 right-4 z-50 flex items-start gap-3 px-4 py-3 rounded shadow-lg text-sm max-w-sm"
+        style={{
+          background: ok ? "color-mix(in srgb, var(--signal-green) 15%, var(--bg-raised))" : "color-mix(in srgb, var(--signal-red) 15%, var(--bg-raised))",
+          border: `1px solid ${ok ? "var(--signal-green)" : "var(--signal-red)"}`,
+          color: "var(--text-primary)",
+        }}
+      >
+        {ok
+          ? <CheckCircle2 size={16} style={{ color: "var(--signal-green)", flexShrink: 0 }} />
+          : <XCircle      size={16} style={{ color: "var(--signal-red)",   flexShrink: 0 }} />
+        }
+        <div>
+          <p className="font-semibold">{ok ? "TikTok Shop connected!" : "Authorization failed"}</p>
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
+            {ok ? `Shop ID: ${shop ?? "—"} • Tokens saved to DB` : (reason ?? "Unknown error")}
+          </p>
+        </div>
+        <button onClick={() => setVisible(false)} className="ml-auto text-xs opacity-50 hover:opacity-100">✕</button>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
 
 // ─── Settings Sections ─────────────────────────────────────────────────────────
 
@@ -208,17 +256,17 @@ function IntegrationsSection() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="grid grid-cols-2 gap-3 mb-5">
               {[
-                { label: "App Key", status: true },
-                { label: "App Secret", status: true },
-                { label: "Shop ID", status: false },
+                { label: "App Key",      status: true  },
+                { label: "App Secret",   status: true  },
+                { label: "Shop ID",      status: false },
                 { label: "Access Token", status: false },
               ].map(({ label, status }) => (
                 <div key={label} className="flex items-center gap-2">
                   {status
                     ? <CheckCircle2 size={13} style={{ color: "var(--signal-green)" }} />
-                    : <XCircle size={13} style={{ color: "var(--signal-gray)" }} />
+                    : <XCircle      size={13} style={{ color: "var(--signal-gray)" }} />
                   }
                   <span className="text-xs" style={{ color: status ? "var(--text-primary)" : "var(--text-dim)" }}>
                     {label}
@@ -227,14 +275,35 @@ function IntegrationsSection() {
               ))}
             </div>
 
-            <button
+            {/* Step 1: Update redirect URI reminder */}
+            <div
+              className="flex items-start gap-2 text-xs p-3 mb-4"
+              style={{ background: "color-mix(in srgb, var(--signal-blue) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--signal-blue) 20%, transparent)", borderRadius: 4 }}
+            >
+              <AlertCircle size={12} className="flex-shrink-0 mt-0.5" style={{ color: "var(--signal-blue)" }} />
+              <p style={{ color: "var(--text-secondary)" }}>
+                <strong style={{ color: "var(--text-primary)" }}>Before clicking Connect:</strong> make sure your redirect URI in TikTok Partner Center is set to the callback URL below.
+              </p>
+            </div>
+
+            {/* Callback URL */}
+            <div className="mb-4">
+              <p className="text-[11px] mb-1.5 font-semibold" style={{ color: "var(--text-secondary)" }}>OAUTH CALLBACK URL (set in Partner Center)</p>
+              <CodeBlock value={TIKTOK_CALLBACK_URL} label="callback-url" />
+            </div>
+
+            {/* Connect button — real auth link */}
+            <a
               id="btn-connect-tiktok"
-              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold transition-opacity hover:opacity-80"
+              href={TIKTOK_AUTH_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold transition-opacity hover:opacity-80"
               style={{ background: "var(--signal-amber)", color: "var(--bg-void)", borderRadius: 4 }}
             >
               Connect TikTok Shop
-              <ChevronRight size={14} />
-            </button>
+              <ExternalLink size={13} />
+            </a>
           </div>
 
           {/* Webhook Config */}
@@ -425,20 +494,18 @@ function BotSection() {
           className="text-xs font-semibold uppercase tracking-wider mb-4"
           style={{ color: "var(--text-dim)" }}
         >
-          Spec Collector (6-Step Flow)
+          Spec Collector (4-Step Flow)
         </h3>
         <div
           className="rounded-sm border px-5 py-4"
           style={{ background: "var(--bg-raised)", borderColor: "var(--border-dim)" }}
         >
           {[
-            { step: 1, label: "Product confirmation", status: "active" },
-            { step: 2, label: "Name / text content", status: "active" },
-            { step: 3, label: "Font selection", status: "active" },
-            { step: 4, label: "Color scheme", status: "active" },
-            { step: 5, label: "Case type / size", status: "active" },
-            { step: 6, label: "Order confirmation recap", status: "active" },
-          ].map(({ step, label, status }) => (
+            { step: 1, label: "Text to print (verbatim)", note: "e.g. \"Lets go GSW\" → 9 pieces" },
+            { step: 2, label: "Color",                    note: "Freeform → 23 options" },
+            { step: 3, label: "Size",                     note: "S / M / L / XL" },
+            { step: 4, label: "Confirm recap",             note: "Buyer says YES → spec written to DB" },
+          ].map(({ step, label, note }) => (
             <div
               key={step}
               className="flex items-center gap-3 py-2.5 border-b last:border-0"
@@ -450,7 +517,10 @@ function BotSection() {
               >
                 {step}
               </span>
-              <span className="text-sm flex-1" style={{ color: "var(--text-primary)" }}>{label}</span>
+              <div className="flex-1">
+                <span className="text-sm" style={{ color: "var(--text-primary)" }}>{label}</span>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--text-dim)" }}>{note}</p>
+              </div>
               <CheckCircle2 size={13} style={{ color: "var(--signal-green)" }} />
             </div>
           ))}
@@ -625,6 +695,11 @@ export default function SettingsPage() {
 
   return (
     <div className="flex h-screen overflow-hidden">
+      {/* OAuth result toast — reads ?tiktok_auth= from URL after redirect */}
+      <Suspense fallback={null}>
+        <AuthToast />
+      </Suspense>
+
       {/* Left nav */}
       <aside
         className="flex-col border-r hidden md:flex"
