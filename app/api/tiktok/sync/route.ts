@@ -9,7 +9,7 @@ import { ingestOrder, mapTikTokStatus } from "@/lib/tiktok/order-ingest";
  * Manually pulls recent orders from TikTok Shop and upserts them.
  * Uses the access_token stored in shop_tokens (from OAuth).
  *
- * Calls POST /api/v2/order/list (NOT a GET — per TikTok certification spec ORD-SYNC-IMPORT).
+ * Calls POST /order/202309/orders/search (versioned TikTok API, per ORD-SYNC-IMPORT spec).
  * For each order, fires GET Order Detail enrichment asynchronously.
  *
  * Query params:
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: tokenRow, error: tokenErr } = await (supabase as any)
     .from("shop_tokens")
-    .select("access_token, access_expires_at")
+    .select("access_token, access_expires_at, shop_id")
     .order("authorized_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -68,7 +68,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .single();
   const shadowMode: boolean = flag?.enabled ?? true;
 
-  // ── Paginated order list via POST /api/v2/order/list ─────────────────────
+  // ── Paginated order list via POST /order/202309/orders/search ────────────
+  const shopCipher: string = tokenRow.shop_id ?? "";
+  if (!shopCipher) {
+    return NextResponse.json({ error: "shop_cipher (shop_id) missing from shop_tokens" }, { status: 500 });
+  }
+
   let pageToken: string | undefined;
   let ingested = 0;
   let pages    = 0;
@@ -80,6 +85,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       pageToken,
       sortField:      "CREATE_TIME",
       sortOrder:      "DESC",
+      shopCipher,
       accessToken:    tokenRow.access_token,
       appKey,
       appSecret,

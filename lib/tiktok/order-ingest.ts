@@ -101,8 +101,24 @@ export async function enrichOrderDetail(
     return;
   }
 
+  // Load shop_cipher (stored as shop_id in shop_tokens)
+  // In TikTok API 202309, shop_cipher is required for all order API calls
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: tokenRow } = await (supabase as any)
+    .from("shop_tokens")
+    .select("shop_id")
+    .order("authorized_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const shopCipher: string = tokenRow?.shop_id ?? "";
+  if (!shopCipher) {
+    console.error("[order-ingest] No shop_cipher found in shop_tokens");
+    return;
+  }
+
   try {
-    const res = await getOrderDetail(orderId, accessToken, appKey, appSecret);
+    const res = await getOrderDetail(orderId, shopCipher, accessToken, appKey, appSecret);
 
     if (res.code !== 0 || !res.data?.orders?.length) {
       console.warn(`[order-ingest] Order Detail failed for ${orderId}: code=${res.code} msg=${res.message}`);
@@ -112,29 +128,30 @@ export async function enrichOrderDetail(
     const detail: TikTokOrderDetail = res.data.orders[0];
     const addr = detail.recipient_address;
 
-    const fullAddress = addr
-      ? [addr.name, addr.address_line1, addr.address_line2, addr.city, addr.state, addr.postal_code, addr.country]
-          .filter(Boolean).join(", ")
-      : null;
+    // Prefer full_address from API; fallback to manual concat
+    const fullAddress = addr?.full_address
+      ?? (addr
+        ? [addr.name, addr.address_line1, addr.address_line2, addr.city, addr.state, addr.postal_code, addr.country]
+            .filter(Boolean).join(", ")
+        : null);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any)
       .from("orders")
       .update({
-        buyer_phone:       addr?.phone_number ?? null,
-        recipient_name:    addr?.name         ?? null,
-        recipient_phone:   addr?.phone_number ?? null,
+        buyer_id:          detail.user_id           ?? null,  // 202309 uses user_id
+        buyer_phone:       addr?.phone_number        ?? null,
+        recipient_name:    addr?.name                ?? null,
+        recipient_phone:   addr?.phone_number        ?? null,
         recipient_address: fullAddress,
-        items_json:        detail.line_items  ?? [],
-        total_amount:      detail.payment_info?.total_amount ?? null,
-        currency:          detail.payment_info?.currency     ?? null,
-        fulfillment_type:  detail.fulfillment_type           ?? null,
+        items_json:        detail.line_items          ?? [],
+        total_amount:      detail.payment?.total_amount ?? null,   // 202309: payment not payment_info
+        currency:          detail.payment?.currency     ?? null,
+        fulfillment_type:  detail.fulfillment_type      ?? null,
         tiktok_created_at: detail.create_time ? new Date(detail.create_time * 1000).toISOString() : null,
         tiktok_updated_at: detail.update_time ? new Date(detail.update_time * 1000).toISOString() : null,
         detail_fetched_at: new Date().toISOString(),
         updated_at:        new Date().toISOString(),
-        // Update buyer_name from detail if we have it (webhook often has it sparse)
-        buyer_name:        detail.buyer_username ?? null,
         status:            mapTikTokStatus(detail.status),
       })
       .eq("platform", "tiktok")
