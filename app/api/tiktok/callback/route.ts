@@ -8,28 +8,34 @@ import { createServiceClient } from '@/lib/supabase/server'
  * the app via the authorization URL:
  *   https://services.tiktokshop.com/open/authorize?service_id=...
  *
- * Query params received from TikTok:
- *   ?code={auth_code}&shop_id={shop_id}
+ * Actual query params received from TikTok (service app redirect):
+ *   ?app_key={app_key}&code={auth_code}&locale={locale}&shop_region={region}
+ *
+ * NOTE: TikTok does NOT include shop_id in the redirect URL for service apps.
+ * The shop identifier (open_id) comes back in the token exchange response body.
  *
  * Flow:
- *   1. Validate required params
- *   2. Exchange auth_code for access_token + refresh_token
- *   3. Upsert tokens into shop_tokens table (keyed by shop_id)
- *   4. Redirect admin to /admin/settings with success toast param
+ *   1. Extract auth code from query params
+ *   2. Exchange code for access_token + refresh_token via TikTok token API
+ *   3. Use open_id from token response as the shop identifier
+ *   4. Upsert tokens into shop_tokens table (keyed by open_id → stored as shop_id)
+ *   5. Redirect to /admin/settings with success/error toast param
  *
- * Security: No session required — this is a server-to-TikTok exchange.
- * The resulting tokens are stored service-role only (RLS blocks anon access).
+ * Security: No session required — server-to-TikTok exchange only.
+ * Resulting tokens are service-role only (RLS blocks anon access).
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const { searchParams } = req.nextUrl
-  const code    = searchParams.get('code')
-  const shop_id = searchParams.get('shop_id')
 
-  // ── Validate ─────────────────────────────────────────────────────────────
-  if (!code || !shop_id) {
-    console.error('[tiktok/callback] Missing code or shop_id', { code, shop_id })
+  // TikTok sends: code, app_key, locale, shop_region
+  const code        = searchParams.get('code')
+  const shop_region = searchParams.get('shop_region') ?? 'PH'
+
+  // ── Validate ──────────────────────────────────────────────────────────────
+  if (!code) {
+    console.error('[tiktok/callback] Missing auth code in redirect params')
     return NextResponse.redirect(
-      new URL('/admin/settings?tiktok_auth=error&reason=missing_params', req.nextUrl.origin)
+      new URL('/admin/settings?tiktok_auth=error&reason=missing_code', req.nextUrl.origin)
     )
   }
 
@@ -45,6 +51,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   // ── Exchange auth code for tokens ─────────────────────────────────────────
   // Docs: https://partner.tiktokshop.com/docv2/page/649a1d55bb6e3302feff16c0
+  // shop_id is NOT returned in redirect — comes from token response as open_id
   let tokenData: TikTokTokenResponse
   try {
     const res = await fetch('https://auth.tiktok-shops.com/api/v2/token/get', {
@@ -59,6 +66,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     })
 
     const json = await res.json() as { code: number; message: string; data?: TikTokTokenResponse }
+
+    console.log('[tiktok/callback] Token exchange response:', JSON.stringify(json, null, 2))
 
     if (json.code !== 0 || !json.data) {
       console.error('[tiktok/callback] Token exchange failed:', json.message, json.code)
@@ -78,7 +87,18 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     )
   }
 
-  // ── Persist tokens ───────────────────────────────────────────────────────
+  // Use open_id as the stable shop identifier (service app — no shop_id in redirect)
+  // open_id uniquely identifies the authorized seller account
+  const shopId = tokenData.open_id
+
+  if (!shopId) {
+    console.error('[tiktok/callback] No open_id in token response:', tokenData)
+    return NextResponse.redirect(
+      new URL('/admin/settings?tiktok_auth=error&reason=no_shop_identifier', req.nextUrl.origin)
+    )
+  }
+
+  // ── Persist tokens ────────────────────────────────────────────────────────
   const now = Date.now()
   const supabase = createServiceClient()
 
@@ -87,8 +107,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     .from('shop_tokens')
     .upsert(
       {
-        shop_id,
+        shop_id:             shopId,
         seller_name:         tokenData.seller_name ?? null,
+        seller_base_region:  shop_region,
         access_token:        tokenData.access_token,
         refresh_token:       tokenData.refresh_token,
         access_expires_at:   new Date(now + tokenData.access_token_expire_in  * 1000).toISOString(),
@@ -105,21 +126,21 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     )
   }
 
-  console.log(`[tiktok/callback] ✅ Authorized shop ${shop_id} (${tokenData.seller_name ?? 'unknown'})`)
+  console.log(`[tiktok/callback] ✅ Authorized shop ${shopId} (${tokenData.seller_name ?? 'unknown'}) region=${shop_region}`)
 
   return NextResponse.redirect(
-    new URL(`/admin/settings?tiktok_auth=success&shop=${encodeURIComponent(shop_id)}`, req.nextUrl.origin)
+    new URL(`/admin/settings?tiktok_auth=success&shop=${encodeURIComponent(shopId)}`, req.nextUrl.origin)
   )
 }
 
-// ─── TikTok Token Exchange Response Shape ────────────────────────────────────
+// ─── TikTok Token Exchange Response Shape ─────────────────────────────────────
 
 interface TikTokTokenResponse {
   access_token:            string
   refresh_token:           string
-  access_token_expire_in:  number  // seconds until access_token expires
-  refresh_token_expire_in: number  // seconds until refresh_token expires
-  open_id:                 string
+  access_token_expire_in:  number   // seconds until access_token expires
+  refresh_token_expire_in: number   // seconds until refresh_token expires
+  open_id:                 string   // stable seller identifier — used as shop_id
   seller_name?:            string
   seller_base_region?:     string
 }
