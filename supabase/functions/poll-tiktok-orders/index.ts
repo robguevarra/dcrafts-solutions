@@ -145,17 +145,20 @@ Deno.serve(async (req: Request) => {
   const now              = Math.floor(Date.now() / 1000);
   const fifteenMinAgo    = now - 15 * 60;
 
-  const body = JSON.stringify({
-    update_time_from: fifteenMinAgo,
-    update_time_to:   now,
-    page_size:        50,
-    sort_field:       "UPDATE_TIME",
-    sort_order:       "DESC",
-  });
+  // Per SDK: page_size, sort_field, sort_order go in QUERY PARAMS (signed)
+  // Body contains ONLY filter criteria
+  const bodyObj = {
+    update_time_ge: fifteenMinAgo,
+    update_time_lt: now,
+  };
+  const body = JSON.stringify(bodyObj);
 
-  // shop_cipher in query param, body included in signature
+  // shop_cipher + pagination params all in query string (included in HMAC)
   const url = await buildSignedUrl("/order/202309/orders/search", {
     shop_cipher: tokenRow.shop_cipher,
+    page_size:   "50",
+    sort_field:  "update_time",
+    sort_order:  "DESC",
   }, body);
 
   const res = await fetch(url, {
