@@ -13,7 +13,7 @@ import crypto from "crypto";
  * @see https://partner.tiktokshop.com/docv2/page/6507ead7b99d5302be949ba9
  */
 
-const BASE_URL = "https://open-api.tiktokshop.com";
+const BASE_URL = "https://open-api.tiktokglobalshop.com";
 const EXCLUDED_PARAMS = new Set(["sign", "access_token"]);
 
 export interface TikTokApiResponse<T = unknown> {

@@ -13,28 +13,15 @@ import {
  *
  * Handles TikTok Shop webhook events (type 1, 2, 4, 11).
  *
- * Critical: uses Next.js `after()` to run order enrichment AFTER the 200
- * response is flushed. Vercel guarantees this runs to completion before
- * terminating the function — unlike `void promise` which gets killed on flush.
- *
- * ⚠️  SIGNATURE DEBUG MODE ACTIVE (DEBUG_SIG_BYPASS = true)
- * Remove once correct HMAC format is confirmed in logs.
+ * Signature: HMAC-SHA256(appKey + rawBody, appSecret) compared to x-tt-signature header.
+ * Confirmed format from production logs 2026-04-18.
+ * Uses after() for post-response enrichment so Vercel doesn't terminate early.
  */
-
-const DEBUG_SIG_BYPASS = true;
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const rawBody   = await req.text();
-  const signature = req.headers.get("x-tts-signature")
-    ?? req.headers.get("Authorization")
-    ?? "";
-
-  // Log ALL headers for one-time forensics
-  const headerMap: Record<string, string> = {};
-  req.headers.forEach((val, key) => { headerMap[key] = val; });
-  console.log("[webhook/tiktok] Headers:", JSON.stringify(headerMap));
-  console.log("[webhook/tiktok] Signature header value:", signature);
-  console.log("[webhook/tiktok] Body preview:", rawBody.slice(0, 300));
+  // TikTok sends signature in x-tt-signature header (raw hex, confirmed 2026-04-18)
+  const signature = req.headers.get("x-tt-signature") ?? "";
 
   const appKey    = process.env.TTS_APP_KEY    ?? "";
   const appSecret = process.env.TTS_APP_SECRET ?? "";
@@ -44,21 +31,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
-  // Try all HMAC formats — log which one matches
-  const { matched, format } = verifyTikTokWebhookSignature(
-    rawBody, signature, appKey, appSecret
-  );
+  // Verify signature — format confirmed: HMAC-SHA256(appKey + rawBody, appSecret)
+  const valid = verifyTikTokWebhookSignature(rawBody, signature, appKey, appSecret);
 
-  if (matched) {
-    console.log(`[webhook/tiktok] ✅ Signature MATCHED using format: "${format}"`);
-  } else {
-    console.warn(
-      `[webhook/tiktok] ⚠️  No HMAC format matched.`,
-      `sig=${signature.slice(0, 40)}... bypass=${DEBUG_SIG_BYPASS}`
-    );
-    if (!DEBUG_SIG_BYPASS) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  if (!valid) {
+    console.warn(`[webhook/tiktok] Invalid signature — rejected. sig=${signature.slice(0, 20)}...`);
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // ── Use after() so Vercel runs this to completion AFTER the 200 is sent ──

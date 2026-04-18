@@ -3,48 +3,40 @@ import crypto from "crypto";
 /**
  * Verifies a TikTok Shop webhook HMAC-SHA256 signature.
  *
- * TikTok webhook verification candidates — we try multiple formats
- * because the official docs mix webhook verification with REST API signing:
+ * Confirmed format (from production log 2026-04-18):
+ *   input  = app_key + raw_body   (concatenated, no separator)
+ *   sign   = HMAC-SHA256(input, app_secret).toHex()
+ *   header = x-tt-signature (raw hex, no "sha256=" prefix)
  *
- *   Format A (most sources): HMAC-SHA256(rawBody, app_secret)
- *   Format B (some sources): HMAC-SHA256(app_key + rawBody, app_secret)
+ * Note: TikTok also sends the same value in the Authorization header.
  *
- * @returns { matched: boolean, format: string | null }
+ * @see https://partner.tiktokshop.com/docv2/page/6507ead7b99d5302be949ba9
  */
 export function verifyTikTokWebhookSignature(
   rawBody:           string,
   receivedSignature: string,
   appKey:            string,
   appSecret:         string
-): { matched: boolean; format: string | null } {
-  const received = receivedSignature.replace(/^sha256=/, "");
+): boolean {
+  if (!receivedSignature || receivedSignature.length < 10) return false;
 
-  if (!received || received.length < 10) {
-    return { matched: false, format: null };
+  // Strip sha256= prefix if present (defensive — production sends raw hex)
+  const received = receivedSignature.replace(/^sha256=/, "").toLowerCase();
+
+  const computed = crypto
+    .createHmac("sha256", appSecret)
+    .update(appKey + rawBody)
+    .digest("hex");
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(computed, "hex"),
+      Buffer.from(received,  "hex")
+    );
+  } catch {
+    // Buffer length mismatch → definitely wrong
+    return false;
   }
-
-  const candidates: Array<{ format: string; input: string }> = [
-    { format: "rawBody only",     input: rawBody },
-    { format: "appKey + rawBody", input: appKey + rawBody },
-    { format: "rawBody + appKey", input: rawBody + appKey },
-  ];
-
-  for (const { format, input } of candidates) {
-    const computed = crypto
-      .createHmac("sha256", appSecret)
-      .update(input)
-      .digest("hex");
-
-    try {
-      if (crypto.timingSafeEqual(Buffer.from(computed, "hex"), Buffer.from(received, "hex"))) {
-        return { matched: true, format };
-      }
-    } catch {
-      // Buffer length mismatch — not hex or wrong length
-    }
-  }
-
-  return { matched: false, format: null };
 }
 
 /**
