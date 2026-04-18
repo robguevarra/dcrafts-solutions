@@ -1,8 +1,8 @@
 # Dcrafts Operations Platform — Documentation
 
-> **Last updated:** 2026-04-16  
-> **Status:** Phase 1 — Active Development (Shadow Mode)  
-> **Live URL:** `localhost:3000` (dev) · Vercel (prod — TBD)
+> **Last updated:** 2026-04-18  
+> **Status:** Phase 1 complete · Phase 2 in progress (chatbot live, CS API pending)  
+> **Live URL:** `https://dcrafts.vercel.app` (prod) · `localhost:3000` (dev)
 
 ---
 
@@ -20,6 +20,7 @@ The **Dcrafts Ops Platform** replaces a manual Excel-based workflow for a custom
 | [database.md](./database.md) | Full schema, enums, indexes, RLS policies |
 | [api.md](./api.md) | All API routes — request/response contracts |
 | [chatbot.md](./chatbot.md) | AI chatbot pipeline, spec collection, playground |
+| [tiktok.md](./tiktok.md) | TikTok OAuth flow, token storage, webhook handler |
 | [roadmap.md](./roadmap.md) | Phase-by-phase task tracker with current status |
 | [shadow-mode.md](./shadow-mode.md) | Shadow Mode strategy, gates, and go-live checklist |
 | [environment.md](./environment.md) | Environment variables and secrets guide |
@@ -32,13 +33,14 @@ The **Dcrafts Ops Platform** replaces a manual Excel-based workflow for a custom
 
 ```
 Phase 1 — Core OMS + KDS        ████████░░  80% complete
-Phase 2 — AI Chatbot             ██████░░░░  60% complete (core pipeline live)
+Phase 2 — AI Chatbot             ███████░░░  70% complete (pipeline + OAuth live)
 Phase 3 — QC Proof + SMS         ░░░░░░░░░░   0% (starts after Phase 2)
 Phase 4 — Scale Intelligence     ░░░░░░░░░░   0% (backlog)
 ```
 
 **Current focus:**
+- [x] TikTok Shop OAuth authorized — tokens in `shop_tokens`
 - [ ] TikTok CS API integration (pending Partner Center approval)
-- [ ] Color validation against 23 official colors  
+- [ ] Token auto-rotation job (access token expires every ~12h)
+- [ ] Color validation against 23 official colors
 - [ ] Field change handling in confirm step ("change color to blue")
-- [ ] Auto-send enable (shadow mode → suggest mode → auto mode)

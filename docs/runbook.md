@@ -157,16 +157,45 @@ Visible in the terminal where `npm run dev` is running.
 
 ## Deployment (Vercel)
 
-> Not yet configured. Will be set up after Gate 1.
+**Live URL:** `https://dcrafts.vercel.app`  
+**Auto-deploys:** Every `git push` to `main` triggers a Vercel build.
 
 ```bash
-# Build check (verify no build errors)
+# Build check before pushing (verify no build errors)
 npm run build
 
-# Environment variables needed in Vercel dashboard:
-# All 7 variables from docs/environment.md
-# (same as .env.local)
+# Deploy is automatic on push:
+git add -A && git commit -m "your message" && git push
 ```
+
+### Environment variables in Vercel
+All variables from `docs/environment.md` must be set in Vercel Dashboard → Project → Settings → Environment Variables.
+
+---
+
+## TikTok OAuth: Re-authorize
+
+If the TikTok access token or refresh token is expired or invalid:
+
+1. Go to `https://dcrafts.vercel.app/admin/settings` → Integrations
+2. Click **Connect TikTok Shop** (links to the authorization URL)
+3. Log in as the TikTok Shop seller account and click **Authorize**
+4. You'll be redirected back to `/admin/settings?tiktok_auth=success`
+5. Tokens are automatically upserted into `shop_tokens`
+
+**Check token health:**
+```sql
+SELECT shop_id, access_expires_at, refresh_expires_at,
+  CASE
+    WHEN refresh_expires_at < NOW() THEN 'REFRESH EXPIRED — re-auth required'
+    WHEN access_expires_at  < NOW() THEN 'ACCESS EXPIRED — re-auth recommended'
+    ELSE 'OK'
+  END AS token_status
+FROM shop_tokens;
+```
+
+> Refresh token expires every **30 days**. Re-auth is required if it lapses.  
+> See [tiktok.md](./tiktok.md) for full OAuth documentation.
 
 ---
 
@@ -187,3 +216,6 @@ The Supabase Realtime subscription failed. Check:
 1. Check that `TIKTOK_WEBHOOK_SECRET` matches what's configured in TikTok Partner Center
 2. Look at Next.js server logs for `[webhook/tiktok]` entries
 3. Check Supabase logs for any DB errors
+
+### TikTok OAuth "Authorization failed" toast
+See the Troubleshooting section in [tiktok.md](./tiktok.md).

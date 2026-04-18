@@ -2,7 +2,7 @@
 
 > **Project:** `qgonuztynqabujtamorm` (Supabase)  
 > **Region:** ap-southeast-1  
-> **Types file:** `types/database.ts` (auto-generated, do not edit manually)
+> **Types file:** `types/database.ts` (manually maintained — regenerate after schema changes)
 
 ---
 
@@ -143,6 +143,26 @@ Audit trail for every SMS sent via Semaphore.
 
 ---
 
+### `shop_tokens`
+TikTok Shop OAuth tokens. One row per authorized shop. Upserted on every OAuth callback.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | `uuid` | PK |
+| `shop_id` | `text` | UNIQUE — TikTok seller shop ID |
+| `seller_name` | `text` | Display name from TikTok token response |
+| `access_token` | `text` | Valid ~12h — used for all Shop API calls |
+| `refresh_token` | `text` | Valid 30 days — used to get fresh access_token |
+| `access_expires_at` | `timestamptz` | expires_in converted to absolute timestamp |
+| `refresh_expires_at` | `timestamptz` | If this passes, full re-auth required |
+| `authorized_at` | `timestamptz` | First authorization timestamp |
+| `updated_at` | `timestamptz` | Auto-updated via trigger |
+
+**RLS:** `service_role` only. Never exposed to authenticated or anon clients.  
+See [tiktok.md](./tiktok.md) for full OAuth flow documentation.
+
+---
+
 ### `feature_flags`
 Operational gate flags. Flip these to control system behavior without a code deploy.
 
@@ -182,6 +202,7 @@ RLS is enabled on all 8 tables. **Migration `002` implemented proper role-scoped
 | `messages` | ❌ (Phase 2) | Bypasses RLS | ❌ |
 | `sms_logs` | SELECT (audit trail) | Bypasses RLS | ❌ |
 | `pre_order_intents` | ❌ (Phase 2) | Bypasses RLS | ❌ |
+| `shop_tokens` | ❌ | service_role policy | ❌ |
 
 > **How admin check works:** `(auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'`  
 > The JWT claim is set in `auth.users.raw_app_meta_data` in Supabase Auth.
@@ -208,8 +229,11 @@ $$ LANGUAGE plpgsql SET search_path = '';  -- search_path fixed for security
 
 | File | Description |
 |------|-------------|
-| `supabase/migrations/001_initial_schema.sql` | All 8 tables, enums, indexes, RLS scaffold, feature flag seed data |
-| `supabase/migrations/002_rbac_policies_and_fk_indexes.sql` | RBAC: role-scoped RLS policies + missing FK indexes for perf |
+| `001_initial_schema.sql` | All 8 core tables, enums, indexes, RLS scaffold, feature flag seed data |
+| `002_rbac_policies_and_fk_indexes.sql` | RBAC: role-scoped RLS policies + missing FK indexes for perf |
+| `003_messaging_tables.sql` | `conversations` + `messages` tables for chatbot pipeline |
+| `004_chatbot_spec_step.sql` | Added `spec_step` + `spec_draft` columns to `conversations` |
+| `005_shop_tokens.sql` | `shop_tokens` table for TikTok OAuth token storage |
 
 To re-apply from scratch:
 ```bash
