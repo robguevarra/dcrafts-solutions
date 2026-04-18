@@ -1,100 +1,189 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyTikTokWebhookSignature, normalizeTikTokOrder, type TikTokWebhookPayload } from "@/lib/tiktok/webhook";
+import { verifyTikTokWebhookSignature } from "@/lib/tiktok/webhook";
 import { createServiceClient } from "@/lib/supabase/server";
+import {
+  ingestOrder,
+  handleReverseEvent,
+  mapTikTokStatus,
+  type ReverseEvent,
+} from "@/lib/tiktok/order-ingest";
 
 /**
  * POST /api/webhooks/tiktok
  *
- * Receives events from TikTok Shop (ORDER_STATUS_CHANGE, reverse events, etc.)
+ * Handles all TikTok Shop webhook event types:
+ *   type 1 — ORDER_STATUS_CHANGE
+ *   type 2 — Reverse Status Update (cancellations, returns)
+ *   type 4 — Recipient Address Update  (address changes before shipment)
  *
- * Signature verification:
- *   HMAC-SHA256(app_key + raw_body, app_secret) compared to x-tts-signature header.
- *   Uses TTS_APP_KEY + TTS_APP_SECRET — NOT a separate webhook secret.
+ * Signature: HMAC-SHA256(app_key + raw_body, app_secret)
+ * Header:    x-tts-signature
  *
- * Response strategy:
- *   - Always return 200 within 5s (TikTok's SLA) for any recognized request.
- *   - Only process type=1 (ORDER_STATUS_CHANGE) — other types are ack'd and ignored.
- *   - Process asynchronously so the 200 is sent immediately.
+ * Response strategy: always 200 within 5s. Process async after ack.
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const rawBody  = await req.text();
+  const rawBody   = await req.text();
   const signature = req.headers.get("x-tts-signature") ?? "";
 
   const appKey    = process.env.TTS_APP_KEY    ?? "";
   const appSecret = process.env.TTS_APP_SECRET ?? "";
 
   if (!appKey || !appSecret) {
+    // Log but still return 200 — avoid TikTok disabling the endpoint
     console.error("[webhook/tiktok] TTS_APP_KEY or TTS_APP_SECRET not set");
-    // Still return 200 to avoid TikTok disabling the webhook endpoint —
-    // we'll fix the env var separately. Log is enough for alerting.
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
-  // Reject unsigned or tampered payloads
   if (!verifyTikTokWebhookSignature(rawBody, signature, appKey, appSecret)) {
-    console.warn("[webhook/tiktok] Invalid signature — rejected", {
-      received: signature.slice(0, 20) + "...",
-    });
+    console.warn("[webhook/tiktok] Signature mismatch — rejected");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Acknowledge TikTok immediately (< 5s SLA) then process async
-  void processAsync(rawBody);
+  // Ack TikTok immediately, process async
+  void processAsync(rawBody, appKey, appSecret);
 
   return NextResponse.json({ ok: true }, { status: 200 });
 }
 
-async function processAsync(rawBody: string): Promise<void> {
-  let payload: TikTokWebhookPayload;
+// ─── Async handler ────────────────────────────────────────────────────────────
+
+async function processAsync(
+  rawBody:   string,
+  appKey:    string,
+  appSecret: string
+): Promise<void> {
+  let payload: WebhookPayload;
   try {
     payload = JSON.parse(rawBody);
   } catch {
-    console.error("[webhook/tiktok] Failed to parse payload:", rawBody.slice(0, 200));
+    console.error("[webhook/tiktok] Invalid JSON payload:", rawBody.slice(0, 200));
     return;
   }
 
-  console.log(`[webhook/tiktok] Received type=${payload.type} shop=${payload.shop_id}`);
+  console.log(`[webhook/tiktok] type=${payload.type} shop=${payload.shop_id}`);
 
-  // Only ingest ORDER_STATUS_CHANGE (type 1)
-  // Other types (2=reverse, 3=product, etc.) are ack'd above and logged here
-  if (payload.type !== 1) {
-    console.log(`[webhook/tiktok] Ignoring non-order event type=${payload.type}`);
-    return;
-  }
+  const supabase = createServiceClient();
 
-  try {
-    const supabase = createServiceClient();
+  // Load access_token for Order Detail enrichment
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: tokenRow } = await (supabase as any)
+    .from("shop_tokens")
+    .select("access_token")
+    .order("authorized_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-    // Check shadow mode feature flag
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: flag } = await (supabase as any)
-      .from("feature_flags")
-      .select("enabled")
-      .eq("name", "shadow_mode")
-      .single();
+  const accessToken: string = tokenRow?.access_token ?? "";
 
-    const shadowMode = flag?.enabled ?? true;
-    const normalized = normalizeTikTokOrder(payload);
-    normalized.shadow_mode = shadowMode;
+  // Shadow mode flag
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: flag } = await (supabase as any)
+    .from("feature_flags")
+    .select("enabled")
+    .eq("name", "shadow_mode")
+    .single();
+  const shadowMode: boolean = flag?.enabled ?? true;
 
-    // Upsert on UNIQUE(platform, platform_order_id) — deduplication guarantee
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase as any)
-      .from("orders")
-      .upsert(normalized, {
-        onConflict: "platform,platform_order_id",
-        ignoreDuplicates: false, // update status if order already exists
-      });
+  switch (payload.type) {
 
-    if (error) {
-      console.error("[webhook/tiktok] DB upsert failed:", error.message);
-      return;
+    // ── Order Status Change ─────────────────────────────────────────────────
+    case 1: {
+      const data = payload.data as OrderStatusData;
+      if (!data?.order_id) {
+        console.warn("[webhook/tiktok] type=1 missing order_id");
+        return;
+      }
+
+      await ingestOrder(
+        {
+          platform_order_id: data.order_id,
+          buyer_id:          data.buyer_uid      ?? null,
+          buyer_name:        data.buyer_username  ?? null,
+          raw_payload:       payload as unknown as Record<string, unknown>,
+          status:            mapTikTokStatus(data.order_status ?? ""),
+          shadow_mode:       shadowMode,
+          tiktok_updated_at: data.update_time
+            ? new Date(data.update_time * 1000).toISOString()
+            : null,
+        },
+        accessToken,
+        supabase
+      );
+      break;
     }
 
-    console.log(
-      `[webhook/tiktok] ✅ Order ingested: ${normalized.platform_order_id} status=${normalized.status} shadow=${shadowMode}`
-    );
-  } catch (err) {
-    console.error("[webhook/tiktok] Processing error:", err);
+    // ── Reverse / Cancellation / Return ────────────────────────────────────
+    case 2: {
+      const data = payload.data as ReverseEventData;
+      if (!data?.order_id) {
+        console.warn("[webhook/tiktok] type=2 missing order_id");
+        return;
+      }
+
+      await handleReverseEvent(
+        {
+          order_id:             data.order_id,
+          reverse_order_id:     data.reverse_order_id,
+          reverse_order_status: data.reverse_order_status ?? 0,
+          reverse_event_type:   data.reverse_event_type   ?? "UNKNOWN",
+          reverse_type:         data.reverse_type         ?? 0,
+          update_time:          data.update_time          ?? payload.timestamp,
+        } satisfies ReverseEvent,
+        supabase
+      );
+      break;
+    }
+
+    // ── Recipient Address Update ────────────────────────────────────────────
+    // Buyer changed their shipping address before shipment.
+    // We must re-fetch Order Detail to get the corrected address.
+    case 4: {
+      const data = payload.data as { order_id?: string };
+      if (!data?.order_id) {
+        console.warn("[webhook/tiktok] type=4 missing order_id");
+        return;
+      }
+
+      if (!accessToken) {
+        console.error("[webhook/tiktok] No access token — cannot re-fetch address for", data.order_id);
+        return;
+      }
+
+      const { enrichOrderDetail } = await import("@/lib/tiktok/order-ingest");
+      await enrichOrderDetail(data.order_id, accessToken, supabase);
+      console.log(`[webhook/tiktok] Address update re-enriched: ${data.order_id}`);
+      break;
+    }
+
+    // ── Unknown type — log and ignore ──────────────────────────────────────
+    default:
+      console.log(`[webhook/tiktok] Unhandled event type=${payload.type} — ack'd, not processed`);
   }
+}
+
+// ─── Payload Types ────────────────────────────────────────────────────────────
+
+interface WebhookPayload {
+  type:      number;
+  shop_id:   string;
+  timestamp: number;
+  data:      Record<string, unknown>;
+}
+
+interface OrderStatusData {
+  order_id?:       string;
+  order_status?:   string;
+  buyer_uid?:      string;
+  buyer_username?: string;
+  update_time?:    number;
+}
+
+interface ReverseEventData {
+  order_id?:             string;
+  reverse_order_id?:     string;
+  reverse_event_type?:   string;
+  reverse_order_status?: number;
+  reverse_type?:         number;
+  reverse_user?:         number;
+  update_time?:          number;
 }
