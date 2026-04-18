@@ -171,19 +171,20 @@ export async function getOrderList(params: {
   appKey:         string;
   appSecret:      string;
 }): Promise<TikTokApiResponse<OrderListData>> {
+  // shop_cipher is a QUERY param for POST /order/202309/orders/search,
+  // not a body field. Placing it in the body breaks the request signature.
   const body: Record<string, unknown> = {
     create_time_from: params.createTimeFrom,
     page_size:        params.pageSize   ?? 20,
     sort_field:       params.sortField  ?? "CREATE_TIME",
     sort_order:       params.sortOrder  ?? "DESC",
-    shop_cipher:      params.shopCipher,
   };
   if (params.createTimeTo) body.create_time_to = params.createTimeTo;
   if (params.pageToken)    body.page_token     = params.pageToken;
 
   return ttsPost<OrderListData>(
     "/order/202309/orders/search",
-    {},
+    { shop_cipher: params.shopCipher },  // ← query param, not body
     body,
     params.accessToken,
     params.appKey,
