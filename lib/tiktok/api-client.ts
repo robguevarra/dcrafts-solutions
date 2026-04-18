@@ -88,6 +88,7 @@ async function ttsPost<T>(
     body:    bodyStr,
   });
   const raw = await res.text();
+  console.log(`[tts-api] POST ${path} body sent:`, bodyStr);
   console.log(`[tts-api] POST ${path} HTTP ${res.status}:`, raw.slice(0, 500));
   return JSON.parse(raw) as TikTokApiResponse<T>;
 }
