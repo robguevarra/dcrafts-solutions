@@ -117,23 +117,32 @@ ngrok http 3000
 ### Test with curl (skip HMAC for dev)
 
 ```bash
+# Compute real signature: HMAC-SHA256(TTS_APP_KEY + body, TTS_APP_SECRET)
+# Header is x-tt-signature (raw hex, no sha256= prefix)
 curl -X POST http://localhost:3000/api/webhooks/tiktok \
   -H "Content-Type: application/json" \
-  -H "x-tts-signature: test" \
+  -H "x-tt-signature: <computed_signature>" \
   -d '{
     "type": 1,
-    "shop_id": "test-shop",
+    "shop_id": "7494826521029151329",
     "timestamp": 1713200000,
     "data": {
       "order_id": "TEST-001",
-      "order_status": "AWAITING_SHIPMENT",
-      "buyer_uid": "uid_test",
-      "buyer_username": "Test Buyer"
+      "order_status": "AWAITING_SHIPMENT"
     }
   }'
 ```
 
-> Note: HMAC verification will reject this unless `TIKTOK_WEBHOOK_SECRET` is set to empty, or you compute a real signature. Use Supabase Dashboard to insert test orders directly during development.
+> For quick dev testing, insert test orders directly into the DB instead (see below).
+> Real signature computation requires: `echo -n "$KEY$BODY" | openssl dgst -sha256 -hmac "$SECRET"`
+
+### Trigger manual order sync (admin)
+
+```bash
+curl -X POST https://dcrafts.vercel.app/api/tiktok/sync?days=3 \
+  -H "Cookie: <your_admin_session_cookie>"
+# Returns: { ok: true, ingested: N, pages: N, shadow_mode: true }
+```
 
 ### Insert test orders directly
 
@@ -213,9 +222,11 @@ The Supabase Realtime subscription failed. Check:
 2. `print_jobs` table is in the `supabase_realtime` publication (verify in Dashboard → Database → Replication)
 
 ### Orders not appearing after webhook
-1. Check that `TIKTOK_WEBHOOK_SECRET` matches what's configured in TikTok Partner Center
-2. Look at Next.js server logs for `[webhook/tiktok]` entries
-3. Check Supabase logs for any DB errors
+1. Check Vercel function logs for `[webhook/tiktok]` entries
+2. Confirm `TTS_APP_KEY` and `TTS_APP_SECRET` are set in Vercel env vars
+3. Check that the webhook handler uses `after()` — not `void promise` (see tiktok.md)
+4. Look for `106011 Invalid shop_cipher` — trigger a resend to auto-repopulate cipher
+5. Check Supabase DB: `SELECT * FROM orders ORDER BY created_at DESC LIMIT 5;`
 
 ### TikTok OAuth "Authorization failed" toast
 See the Troubleshooting section in [tiktok.md](./tiktok.md).

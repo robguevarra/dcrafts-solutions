@@ -13,9 +13,10 @@
 # ──────────────────────────────────────────────────
 TTS_APP_KEY=                     # Your TikTok app key (from TikTok Partner Center)
 TTS_APP_SECRET=                  # Your TikTok app secret
+                                 # Used BOTH for webhook HMAC verification AND outbound API signing
 
-TIKTOK_WEBHOOK_SECRET=           # Secret used to verify HMAC-SHA256 signatures
-                                 # Set this in TikTok Partner Center → Webhooks
+# TIKTOK_WEBHOOK_SECRET — DEPRECATED. No longer used.
+# Webhook signatures use TTS_APP_SECRET directly (HMAC-SHA256(appKey+rawBody, appSecret)).
 
 # ──────────────────────────────────────────────────
 # Supabase
@@ -51,8 +52,8 @@ SEMAPHORE_API_KEY=               # From semaphore.co dashboard
 | Variable | Used in | Exposed to browser? |
 |----------|---------|-------------------|
 | `TTS_APP_KEY` | `lib/tiktok/*` | ❌ No |
-| `TTS_APP_SECRET` | `lib/tiktok/webhook.ts` (signature) | ❌ No |
-| `TIKTOK_WEBHOOK_SECRET` | `app/api/webhooks/tiktok/route.ts` | ❌ No |
+| `TTS_APP_SECRET` | `lib/tiktok/webhook.ts` (HMAC) + `lib/tiktok/api-client.ts` (signing) | ❌ No |
+| `TIKTOK_WEBHOOK_SECRET` | **Deprecated — remove from env** | ❌ No |
 | `NEXT_PUBLIC_SUPABASE_URL` | `lib/supabase/client.ts`, `lib/supabase/server.ts` | ✅ Yes (intentional) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `lib/supabase/client.ts` | ✅ Yes (intentional) |
 | `SUPABASE_SERVICE_ROLE_KEY` | `lib/supabase/server.ts` (service client only) | ❌ Never |
@@ -69,7 +70,7 @@ Copy this file and fill in real values:
 # TikTok Shop
 TTS_APP_KEY=your_app_key_here
 TTS_APP_SECRET=your_app_secret_here
-TIKTOK_WEBHOOK_SECRET=your_webhook_secret_here
+# TIKTOK_WEBHOOK_SECRET — deprecated, leave unset
 
 # Supabase
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
@@ -89,5 +90,5 @@ SEMAPHORE_API_KEY=your_semaphore_key_here
 
 1. **`SUPABASE_SERVICE_ROLE_KEY`** bypasses all RLS policies. If this leaks, anyone can read/write all data. Keep it strictly server-side.
 2. **`OPENAI_API_KEY`** has direct billing impact. Set usage limits in OpenAI dashboard.
-3. **`TTS_APP_SECRET`** is used to verify incoming webhooks. If it leaks, attackers can spoof order events.
+3. **`TTS_APP_SECRET`** is used to sign both outbound API calls and to verify incoming webhooks. If it leaks, attackers can spoof order events AND call the TikTok API on your behalf.
 4. All variables without `NEXT_PUBLIC_` prefix are automatically excluded from the browser bundle by Next.js.

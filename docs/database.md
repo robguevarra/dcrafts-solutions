@@ -29,7 +29,7 @@ The central table. One row per unique order across all platforms.
 | `id` | `uuid` | Primary key |
 | `platform` | `order_platform` | `tiktok` or `shopee` |
 | `platform_order_id` | `text` | Original order ID from the platform |
-| `buyer_id` | `text` | TikTok `buyer_uid` or Shopee user ID |
+| `buyer_id` | `text` | TikTok `user_id` (202309 API) or Shopee user ID |
 | `buyer_name` | `text` | Display name |
 | `buyer_phone` | `text` | For SMS (Shopee imports; TikTok via GetOrderDetail) |
 | `raw_payload` | `jsonb` | Original webhook payload for debugging |
@@ -149,9 +149,11 @@ TikTok Shop OAuth tokens. One row per authorized shop. Upserted on every OAuth c
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | `uuid` | PK |
-| `shop_id` | `text` | UNIQUE — TikTok seller shop ID |
+| `shop_id` | `text` | Numeric TikTok shop ID (e.g. `7494826521029151329`) |
+| `shop_cipher` | `text` | **202309 API required** — from `GET /authorization/202309/shops` |
 | `seller_name` | `text` | Display name from TikTok token response |
-| `access_token` | `text` | Valid ~12h — used for all Shop API calls |
+| `seller_base_region` | `text` | e.g. `PH` |
+| `access_token` | `text` | Valid ~7 days — used for all Shop API calls |
 | `refresh_token` | `text` | Valid 30 days — used to get fresh access_token |
 | `access_expires_at` | `timestamptz` | expires_in converted to absolute timestamp |
 | `refresh_expires_at` | `timestamptz` | If this passes, full re-auth required |
@@ -160,6 +162,10 @@ TikTok Shop OAuth tokens. One row per authorized shop. Upserted on every OAuth c
 
 **RLS:** `service_role` only. Never exposed to authenticated or anon clients.  
 See [tiktok.md](./tiktok.md) for full OAuth flow documentation.
+
+> ⚠️ `shop_cipher` ≠ `shop_id`. The cipher comes from `GET /authorization/202309/shops`
+> and is required for all 202309 order endpoints. It is populated automatically on the
+> first webhook/sync after OAuth authorization.
 
 ---
 
@@ -234,6 +240,9 @@ $$ LANGUAGE plpgsql SET search_path = '';  -- search_path fixed for security
 | `003_messaging_tables.sql` | `conversations` + `messages` tables for chatbot pipeline |
 | `004_chatbot_spec_step.sql` | Added `spec_step` + `spec_draft` columns to `conversations` |
 | `005_shop_tokens.sql` | `shop_tokens` table for TikTok OAuth token storage |
+| `006_` *(chatbot columns)* | Chatbot-related columns on conversations/orders |
+| `007_orders_enrich_columns` | Added `recipient_name`, `recipient_phone`, `recipient_address`, `items_json`, `total_amount`, `currency`, `fulfillment_type`, `detail_fetched_at`, `reverse_status` to `orders` |
+| `008_shop_tokens_add_cipher` | Added `shop_cipher` column to `shop_tokens` for TikTok API 202309 |
 
 To re-apply from scratch:
 ```bash

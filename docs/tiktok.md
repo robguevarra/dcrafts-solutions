@@ -1,7 +1,8 @@
 # TikTok Shop Integration
 
-> **Status:** OAuth connected · Webhooks active · CS API approval pending  
-> **Last updated:** 2026-04-18
+> **Status:** OAuth connected · Webhooks active · Order enrichment live · CS API approval pending  
+> **Last updated:** 2026-04-18  
+> **API version:** 202309 (versioned path endpoints)
 
 ---
 
@@ -11,10 +12,8 @@ The platform integrates with TikTok Shop via two separate API surfaces:
 
 | API | Purpose | Status |
 |-----|---------|--------|
-| **TikTok Shop Open API** | Orders, shop data | ✅ OAuth authorized |
+| **TikTok Shop Open API (202309)** | Orders, shop data | ✅ OAuth authorized + enrichment live |
 | **Customer Service (CS) API** | Read/send buyer messages | ⏳ Approval pending |
-
-These require separate authorization. The Shop Open API is authorized via OAuth and tokens are stored in `shop_tokens`. The CS API uses the same OAuth flow but requires additional Partner Center approval for the messaging scopes.
 
 ---
 
@@ -23,106 +22,213 @@ These require separate authorization. The Shop Open API is authorized via OAuth 
 ```
 TikTok Shop
   │
-  ├─ Webhooks (primary)
+  ├─ Webhooks (primary)                         app/api/webhooks/tiktok/route.ts
   │    POST /api/webhooks/tiktok
-  │    HMAC-SHA256 verified (x-tts-signature header)
-  │    Handles ORDER_STATUS_CHANGE events
-  │    Zero processing time — acknowledges in <5s then async processes
+  │    HMAC-SHA256 verified (x-tt-signature header)
+  │    Signature = HMAC(appKey + rawBody, appSecret)   ← confirmed 2026-04-18
+  │    Handles types: 1 (order status), 2 (reverse), 4 (address), 11 (cancel)
+  │    Returns 200 immediately, runs enrichment via after() post-response
   │
-  └─ Polling fallback (secondary)
-       Supabase Edge Function: poll-tiktok-orders
-       pg_cron schedule: every 15 minutes
-       Catches orders missed by webhook failures
-       Requires: shop access_token from shop_tokens table
+  ├─ Manual Sync (admin trigger)                app/api/tiktok/sync/route.ts
+  │    POST /api/tiktok/sync?days=3
+  │    Calls POST /order/202309/orders/search (pagination up to 10 pages)
+  │    Auth-guarded — requires logged-in admin session
+  │
+  └─ Order Enrichment (automatic)              lib/tiktok/order-ingest.ts
+       Triggered after every webhook + every sync item
+       Calls GET /order/202309/orders with shop_cipher
+       Writes: buyer name, phone, address, items, payment to orders table
 ```
 
 ---
 
+## API Endpoints (202309)
+
+All calls go to `https://open-api.tiktokglobalshop.com` (confirmed production host).
+
+> ⚠️ **Do NOT use** `open-api.tiktokshop.com` — it does not resolve (ENOTFOUND).  
+> ⚠️ **Do NOT use** `/api/v2/order/detail` or `/api/v2/order/list` — these are old v2 paths.
+
+| Operation | Method | Path |
+|-----------|--------|------|
+| Get Order Detail | GET | `/order/202309/orders?ids=<id>&shop_cipher=<cipher>` |
+| Search Order List | POST | `/order/202309/orders/search` |
+| Get Authorized Shops | GET | `/authorization/202309/shops` |
+| Get Access Token | POST | `https://auth.tiktok-shops.com/api/v2/token/get` |
+| Refresh Access Token | POST | `https://auth.tiktok-shops.com/api/v2/token/refresh` |
+
+### Request Signing
+
+Every API call (except token exchange) must be signed:
+
+```
+1. Collect all query params, exclude `sign` and `access_token`
+2. Sort alphabetically, concatenate as key+value (no separator)
+3. base   = path + sorted_params + body_json (empty string if GET)
+4. wrap   = app_secret + base + app_secret
+5. sign   = HMAC-SHA256(wrap, appSecret).toHex()
+```
+
+Implemented in `lib/tiktok/api-client.ts` → `generateSign()`.
+
+---
+
+## Webhook Signature Verification
+
+**Confirmed production format (2026-04-18):**
+
+```
+signature = HMAC-SHA256(app_key + raw_body, app_secret).toHex()
+header    = x-tt-signature   (raw hex string, no "sha256=" prefix)
+```
+
+Implemented in `lib/tiktok/webhook.ts` → `verifyTikTokWebhookSignature()`.
+
+> ⚠️ **Old docs say** `x-tts-signature` — TikTok actually sends `x-tt-signature`.  
+> ⚠️ **Old docs say** to use a separate webhook secret — the signing key IS `app_secret` (`TTS_APP_SECRET`).  
+> `TIKTOK_WEBHOOK_SECRET` is **no longer used**.
+
+---
+
+## shop_cipher — Critical Concept
+
+In API version 202309, all shop-specific endpoints require a `shop_cipher` parameter.
+
+**This is NOT the numeric `shop_id` (e.g. `7494826521029151329`).**
+
+`shop_cipher` is a base64-encoded identifier fetched from `GET /authorization/202309/shops`.
+
+### Resolution Flow
+
+```
+enrichOrderDetail() called
+  │
+  ├─ Check shop_tokens.shop_cipher in DB
+  │    ├─ Found → use it (fast path, O(1))
+  │    └─ Not found → call GET /authorization/202309/shops
+  │           ├─ Returns shops[0].cipher
+  │           └─ Write cipher back to shop_tokens.shop_cipher (cache)
+  │
+  └─ Call GET /order/202309/orders?ids=<orderId>&shop_cipher=<cipher>
+```
+
+**Troubleshooting error `106011 Invalid shop_cipher`:**
+- The `shop_cipher` column in `shop_tokens` may be stale/empty
+- Trigger any webhook — `resolveShopCipher()` will call the shops API and repopulate it automatically
+- Or run: `UPDATE shop_tokens SET shop_cipher = NULL;` then trigger a webhook to force a fresh fetch
+
+---
+
 ## OAuth Authorization Flow
-
-TikTok Shop uses a standard OAuth 2.0 authorization code flow. The access token obtained grants permission to call the Shop Open API on behalf of the seller.
-
-### Flow Diagram
 
 ```
 Seller visits authorization URL
   https://services.tiktokshop.com/open/authorize?service_id=7628648618510272277
   │
   ▼
-TikTok authorization screen ("Allow this app to access your shop?")
-  │
-  ▼ seller clicks Authorize
+TikTok authorization screen → seller clicks Authorize
   │
 TikTok redirects to:
-  https://dcrafts.vercel.app/api/tiktok/callback?code=AUTH_CODE&shop_id=SHOP_ID
+  https://dcrafts.vercel.app/api/tiktok/callback?code=AUTH_CODE&shop_region=PH
   │
   ▼
 GET /api/tiktok/callback  ←  app/api/tiktok/callback/route.ts
   │
-  ├─ Validates: code + shop_id present
-  ├─ Reads: TTS_APP_KEY + TTS_APP_SECRET from env
   ├─ POST https://auth.tiktok-shops.com/api/v2/token/get
   │   body: { app_key, app_secret, auth_code, grant_type: "authorized_code" }
   │
-  ├─ On success: upserts access_token + refresh_token into shop_tokens
-  │              (keyed by shop_id — safe to re-run, idempotent)
+  ├─ Upserts: access_token, refresh_token, seller_name into shop_tokens
   │
-  └─ Redirects to /admin/settings?tiktok_auth=success&shop=SHOP_ID
-       Settings page shows green toast: "TikTok Shop connected!"
+  └─ Redirects to /admin/settings?tiktok_auth=success
 ```
+
+> After a fresh OAuth callback, the `shop_cipher` column will be empty until the first webhook/sync triggers `resolveShopCipher()`.
 
 ### How to Re-authorize
 
-If tokens expire or become invalid:
-
 1. Go to `/admin/settings` → Integrations → **Connect TikTok Shop**
-2. Click the button (links to the auth URL)
-3. Approve access in TikTok
-4. You'll be redirected back with fresh tokens automatically upserted
+2. Approve in TikTok → redirected back automatically
+3. Trigger a test webhook or manual sync to populate `shop_cipher`
 
-> ⚠️ The `refresh_token` expires after **30 days**. If it expires, you must re-run the full OAuth flow. A token rotation job is planned for Phase 3.
+> ⚠️ The `refresh_token` expires after **30 days**. Re-authorize before then.
 
 ---
 
 ## Token Storage: `shop_tokens` Table
 
-Tokens are stored server-side in Supabase, never in environment variables (tokens rotate — env var approach would require redeploys).
-
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | `uuid` | PK |
-| `shop_id` | `text` | UNIQUE — TikTok's seller shop ID |
-| `seller_name` | `text` | Display name from TikTok |
-| `access_token` | `text` | Valid for ~12 hours |
-| `refresh_token` | `text` | Valid for 30 days |
-| `access_expires_at` | `timestamptz` | When access_token expires |
-| `refresh_expires_at` | `timestamptz` | When refresh_token expires — must re-auth before this |
-| `authorized_at` | `timestamptz` | First authorization timestamp |
-| `updated_at` | `timestamptz` | Auto-updated on every upsert |
+| `shop_id` | `text` | Numeric TikTok shop ID (e.g. `7494826521029151329`) |
+| `shop_cipher` | `text` | **202309 API identifier** — from `/authorization/202309/shops` |
+| `seller_name` | `text` | Display name |
+| `seller_base_region` | `text` | e.g. `PH` |
+| `access_token` | `text` | Valid ~7 days |
+| `refresh_token` | `text` | Valid 30 days |
+| `access_expires_at` | `timestamptz` | Check before API calls |
+| `refresh_expires_at` | `timestamptz` | If passed → full re-auth required |
+| `authorized_at` | `timestamptz` | First authorization |
+| `updated_at` | `timestamptz` | Auto-updated |
 
-**RLS:** `service_role` only — tokens are never accessible via anon or authenticated browser clients.
+**RLS:** `service_role` only.
 
-**Check token status:**
+**Check token + cipher status:**
 ```sql
-SELECT shop_id, seller_name, access_expires_at, refresh_expires_at, authorized_at
+SELECT shop_id, seller_name,
+       LEFT(shop_cipher, 30) AS cipher_preview,
+       access_expires_at, refresh_expires_at,
+       CASE
+         WHEN refresh_expires_at < NOW() THEN 'REFRESH EXPIRED — re-auth required'
+         WHEN access_expires_at  < NOW() THEN 'ACCESS EXPIRED'
+         WHEN shop_cipher IS NULL THEN 'CIPHER MISSING — trigger webhook to populate'
+         ELSE 'OK'
+       END AS status
 FROM shop_tokens;
 ```
 
 ---
 
-## Webhook Handler: `POST /api/webhooks/tiktok`
+## Webhook Handler
 
-Receives `ORDER_STATUS_CHANGE` events from TikTok Partner Center.
+**File:** `app/api/webhooks/tiktok/route.ts`
 
-**Source:** `app/api/webhooks/tiktok/route.ts`  
-**Auth:** HMAC-SHA256 via `x-tts-signature` header (secret: `TIKTOK_WEBHOOK_SECRET`)
+### Event Types Handled
 
-### Event Type Mapping
+| TikTok `type` | Meaning | Handler |
+|---------------|---------|---------|
+| `1` | Order Status Change | `ingestOrder()` → `enrichOrderDetail()` |
+| `2` | Reverse/Return/Cancel | `handleReverseEvent()` |
+| `4` | Recipient Address Update | `enrichOrderDetail()` re-fetch |
+| `11` | Cancellation Status Change | `handleReverseEvent()` |
 
-| TikTok `type` | Meaning | Handled? |
-|---------------|---------|----------|
-| `1` | ORDER_STATUS_CHANGE | ✅ |
-| Other | Other event types | Ignored (return 200 silently) |
+### Why `after()` is Critical
+
+```typescript
+// ❌ WRONG — Vercel kills this when 200 response is flushed:
+void processAsync(rawBody);
+return NextResponse.json({ ok: true });
+
+// ✅ CORRECT — Vercel waits for after() to complete before termination:
+after(async () => { await processAsync(rawBody); });
+return NextResponse.json({ ok: true });
+```
+
+Without `after()`, the enrichment API call (Order Detail) never runs because Vercel terminates the function instance as soon as the response is sent.
+
+### Order Ingestion: Two-Step Flow
+
+```
+Webhook received
+  │
+  ├─ Step 1 (synchronous, before 200 ack)
+  │    upsertMinimalOrder() — saves order_id + status
+  │
+  └─ Step 2 (inside after(), post-response)
+       enrichOrderDetail()
+         └─ resolveShopCipher() → GET /authorization/202309/shops (if not cached)
+         └─ GET /order/202309/orders → buyer name, phone, address, items
+         └─ UPDATE orders SET recipient_name, recipient_phone, items_json, ...
+```
 
 ### Order Status Mapping
 
@@ -131,138 +237,62 @@ Receives `ORDER_STATUS_CHANGE` events from TikTok Partner Center.
 | `UNPAID`, `ON_HOLD` | `pending_spec` |
 | `AWAITING_SHIPMENT`, `AWAITING_COLLECTION` | `spec_collected` |
 | `IN_TRANSIT`, `DELIVERED`, `COMPLETED` | `shipped` |
-| `CANCELLED` | `cancelled` |
-| (anything else) | `pending_spec` |
-
-### Deduplication
-
-Every order ingestion is an UPSERT on `UNIQUE(platform, platform_order_id)`. Duplicate webhooks for the same order safely update the status row — no duplicates possible.
-
-### Shadow Mode Behavior
-
-When `feature_flags.shadow_mode = TRUE`:
-- Order is ingested and stored normally
-- `orders.shadow_mode` column is set to `TRUE`
-- No writes are made back to TikTok (no message sends, no status updates)
-
----
-
-## OAuth Callback: `GET /api/tiktok/callback`
-
-**Source:** `app/api/tiktok/callback/route.ts`
-
-Handles the redirect from TikTok after authorization. This is the only route that should be set as the **Redirect URI** in TikTok Partner Center.
-
-| Redirect URI (Partner Center setting) |
-|--------------------------------------|
-| `https://dcrafts.vercel.app/api/tiktok/callback` |
-
-**Query params received:**
-- `code` — single-use authorization code (expires in ~10 minutes)
-- `shop_id` — the seller's TikTok shop ID
-
-**Error redirects:**
-
-| Error | Redirect destination |
-|-------|---------------------|
-| Missing `code` or `shop_id` | `/admin/settings?tiktok_auth=error&reason=missing_params` |
-| Env vars not set | `/admin/settings?tiktok_auth=error&reason=server_misconfiguration` |
-| TikTok token API failure | `/admin/settings?tiktok_auth=error&reason=<tiktok_message>` |
-| DB write failure | `/admin/settings?tiktok_auth=error&reason=db_write_failed` |
-| Success | `/admin/settings?tiktok_auth=success&shop=<shop_id>` |
+| `CANCELLED`, `PARTIALLY_CANCELLED` | `cancelled` |
 
 ---
 
 ## Partner Center Configuration
 
-### Required settings in TikTok Partner Center
-
 | Setting | Value |
 |---------|-------|
 | **Redirect URI** | `https://dcrafts.vercel.app/api/tiktok/callback` |
 | **Webhook URL** | `https://dcrafts.vercel.app/api/webhooks/tiktok` |
-| **Webhook Secret** | Matches `TIKTOK_WEBHOOK_SECRET` env var |
+| **Webhook Secret** | *(not used — signature uses `TTS_APP_SECRET`)* |
 | **Service ID** | `7628648618510272277` |
-
-### OAuth App Scopes
-
-| Scope | Required For | Status |
-|-------|-------------|--------|
-| `Shop.Product.Read` | Order detail lookup | ✅ Included |
-| `Order.Read` | Order status webhooks | ✅ Included |
-| `CS.MESSAGE_AND_ROOM.READ` | Read buyer messages | ⏳ CS API approval pending |
-| `CS.MESSAGE_AND_ROOM.WRITE` | Send bot replies | ⏳ CS API approval pending |
 
 ---
 
 ## Environment Variables
 
-| Variable | Where it comes from | Used in |
-|----------|--------------------|---------| 
-| `TTS_APP_KEY` | Partner Center → App Info | `app/api/tiktok/callback/route.ts` |
-| `TTS_APP_SECRET` | Partner Center → App Info | `app/api/tiktok/callback/route.ts` |
-| `TIKTOK_WEBHOOK_SECRET` | Partner Center → Webhooks | `app/api/webhooks/tiktok/route.ts` |
-
-Tokens (`access_token`, `refresh_token`) are **not** in env vars — they live in `shop_tokens` and are read at runtime by any server-side code that calls the TikTok API.
+| Variable | Purpose | Required |
+|----------|---------|---------|
+| `TTS_APP_KEY` | Part of webhook HMAC + all API signing | ✅ |
+| `TTS_APP_SECRET` | HMAC signing key for both webhooks and API calls | ✅ |
+| `TIKTOK_WEBHOOK_SECRET` | **Deprecated — no longer used** | ❌ Remove |
 
 ---
 
 ## Troubleshooting
 
-### "Authorization failed — missing_params" toast
+### `401` on webhook — signature rejected
 
-TikTok redirected without a `code` or `shop_id`. Usually means:
-- The redirect URI in Partner Center doesn't exactly match `https://dcrafts.vercel.app/api/tiktok/callback`
-- Extra trailing slash or path difference
+1. Confirm `TTS_APP_KEY` and `TTS_APP_SECRET` are set in Vercel env vars
+2. Signature format: `HMAC-SHA256(app_key + raw_body, app_secret)` compared to `x-tt-signature` header
 
-**Fix:** Double-check the exact URI in Partner Center → App Info → Redirect URI.
+### `ENOTFOUND open-api.tiktokshop.com`
 
-### "Authorization failed — token_exchange_failed"
+Wrong hostname. The correct production API host is `open-api.tiktokglobalshop.com`. Check `lib/tiktok/api-client.ts` → `BASE_URL`.
 
-The auth code exchange with TikTok's API failed. Possible causes:
-1. `TTS_APP_KEY` or `TTS_APP_SECRET` is wrong in Vercel env vars
-2. The auth code expired (valid ~10 minutes). Re-run OAuth.
-3. App not yet approved by TikTok Partner Center
+### `106011 Invalid shop_cipher`
 
-### No orders appearing after webhook fires
+The `shop_cipher` in DB is wrong or expired. Resolution:
+1. Clear it: `UPDATE shop_tokens SET shop_cipher = NULL;`
+2. Trigger any webhook — `resolveShopCipher()` will fetch a fresh one from `/authorization/202309/shops`
 
-1. Check Vercel function logs for `[webhook/tiktok]` entries
-2. Confirm `TIKTOK_WEBHOOK_SECRET` matches Partner Center
-3. Check `shadow_mode = TRUE` in `feature_flags` (orders will be stored but not sent back)
+### Orders appearing with `—` for buyer name/phone
 
-```sql
--- Check if webhook is receiving events
-SELECT platform_order_id, status, shadow_mode, created_at
-FROM orders
-ORDER BY created_at DESC
-LIMIT 10;
-```
+The enrichment step (`enrichOrderDetail`) isn't running. Common causes:
+- **Vercel Hobby + fire-and-forget**: make sure `after()` is used, not `void promise`
+- **shop_cipher error**: check for `106011` in logs
+- **API host wrong**: check for `ENOTFOUND` in logs
 
-### Access token expired mid-operation
+### `order_status` returning integers instead of strings
 
-```sql
--- Check token health
-SELECT shop_id, access_expires_at, refresh_expires_at,
-  CASE
-    WHEN access_expires_at  < NOW() THEN 'ACCESS EXPIRED'
-    WHEN refresh_expires_at < NOW() THEN 'REFRESH EXPIRED — re-auth required'
-    WHEN access_expires_at  < NOW() + interval '1 hour' THEN 'ACCESS expiring soon'
-    ELSE 'OK'
-  END AS token_status
-FROM shop_tokens;
-```
-
-If `REFRESH EXPIRED`: go to `/admin/settings` → Connect TikTok Shop → re-authorize.
+Wrong API version. Ensure you're calling `/order/202309/orders` (not `/api/v2/order/detail`). The 202309 version uses string ENUMs (`UNPAID`, `AWAITING_SHIPMENT`, etc.).
 
 ---
 
-## Planned: Token Auto-Rotation (Phase 3)
+## Planned
 
-Currently tokens must be manually refreshed before expiry. In Phase 3, a background job will:
-
-1. Run every 6 hours via pg_cron
-2. Check `access_expires_at < NOW() + interval '2 hours'`
-3. Call `POST https://auth.tiktok-shops.com/api/v2/token/refresh` with `refresh_token`
-4. Upsert fresh tokens back into `shop_tokens`
-
-This eliminates the need for manual re-authorization every 12 hours.
+- **Token Auto-Rotation (Phase 3):** Background job to refresh `access_token` before it expires, eliminating manual re-auth every 7 days.
+- **CS Messaging:** Pending TikTok Partner Center approval for `CS.MESSAGE_AND_ROOM.READ/WRITE` scopes.
