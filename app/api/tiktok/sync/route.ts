@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient, createClient } from "@/lib/supabase/server";
 import { getOrderList } from "@/lib/tiktok/api-client";
-import { ingestOrder, mapTikTokStatus } from "@/lib/tiktok/order-ingest";
+import { ingestOrder, mapTikTokStatus, resolveShopCipher } from "@/lib/tiktok/order-ingest";
 
 /**
  * POST /api/tiktok/sync
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: tokenRow, error: tokenErr } = await (supabase as any)
     .from("shop_tokens")
-    .select("access_token, access_expires_at, shop_id")
+    .select("access_token, access_expires_at")
     .order("authorized_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -68,10 +68,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .single();
   const shadowMode: boolean = flag?.enabled ?? true;
 
-  // ── Paginated order list via POST /order/202309/orders/search ────────────
-  const shopCipher: string = tokenRow.shop_id ?? "";
+  // ── Resolve shop_cipher via /authorization/202309/shops ──────────────────
+  const shopCipher = await resolveShopCipher(
+    tokenRow.access_token, appKey, appSecret, supabase
+  );
   if (!shopCipher) {
-    return NextResponse.json({ error: "shop_cipher (shop_id) missing from shop_tokens" }, { status: 500 });
+    return NextResponse.json({ error: "Could not resolve shop_cipher from TikTok" }, { status: 500 });
   }
 
   let pageToken: string | undefined;

@@ -95,13 +95,43 @@ async function ttsPost<T>(
 // ─── Domain Methods ───────────────────────────────────────────────────────────
 
 /**
+ * GET Authorized Shops (API version 202309).
+ *
+ * Retrieves the seller's authorized shops including the shop_cipher token
+ * required by all 202309 order APIs. Call this to get a valid shop_cipher.
+ * The cipher is stable (does not expire like access_token) but must be
+ * fetched at least once after authorization via the OAuth callback.
+ *
+ * @see https://partner.tiktokshop.com/docv2/page/authorization-202309
+ */
+export async function getAuthorizedShops(
+  accessToken: string,
+  appKey:      string,
+  appSecret:   string
+): Promise<TikTokApiResponse<{ shops: TikTokShop[] }>> {
+  return ttsGet<{ shops: TikTokShop[] }>(
+    "/authorization/202309/shops",
+    {},
+    accessToken,
+    appKey,
+    appSecret
+  );
+}
+
+export interface TikTokShop {
+  id:           string;   // numeric shop ID (e.g. "7494826521029151329")
+  cipher:       string;   // shop_cipher needed for all order API calls
+  name:         string;
+  region:       string;
+  seller_type?: string;
+}
+
+/**
  * GET Order Detail (API version 202309).
  *
  * Endpoint: GET /order/202309/orders
  * Required params: ids (comma-sep order IDs, max 50), shop_cipher
- *
- * Note: shop_cipher is what we store as shop_id in shop_tokens.
- * The old /api/v2/order/detail path returns 404 — use versioned path.
+ * shop_cipher must come from getAuthorizedShops(), NOT from the OAuth callback.
  *
  * @see https://partner.tiktokshop.com/docv2/page/get-order-detail-202309
  */

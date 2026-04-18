@@ -1,17 +1,17 @@
 import { SupabaseClient } from "@supabase/supabase-js";
-import { getOrderDetail, type TikTokOrderDetail } from "./api-client";
+import { getOrderDetail, getAuthorizedShops, type TikTokOrderDetail } from "./api-client";
 
 /**
  * order-ingest.ts — Shared order enrichment + upsert logic.
  *
  * Flow for every TikTok order we receive (via webhook or manual sync):
  *   1. Upsert minimal order row from webhook/list payload (fast, immediate)
- *   2. Fire-and-forget: call GET Order Detail to enrich with address, items, phone
+ *   2. Call GET Order Detail to enrich with address, items, phone
  *
- * Why two steps?
- *   - Webhooks must respond in < 5s. Order Detail API can take 1-2s.
- *   - We never want a slow external call to block the webhook ack.
- *   - If Detail fails, we still have the minimal order row with its ID.
+ * shop_cipher lifecycle:
+ *   - Fetched from GET /authorization/202309/shops (not from OAuth callback)
+ *   - Stored in shop_tokens.shop_cipher for reuse
+ *   - Fetched fresh if DB value is empty
  */
 
 // ─── Credentials helper ───────────────────────────────────────────────────────
@@ -20,6 +20,52 @@ function getApiCreds() {
   const appKey    = process.env.TTS_APP_KEY    ?? "";
   const appSecret = process.env.TTS_APP_SECRET ?? "";
   return { appKey, appSecret };
+}
+
+/**
+ * Resolves the shop_cipher needed for 202309 API calls.
+ * Reads from DB first; calls GET /authorization/202309/shops if missing
+ * and writes the cipher back to DB for future requests.
+ */
+export async function resolveShopCipher(
+  accessToken: string,
+  appKey:      string,
+  appSecret:   string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase:    SupabaseClient<any>
+): Promise<string> {
+  // 1. Check DB cache first
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: row } = await (supabase as any)
+    .from("shop_tokens")
+    .select("shop_cipher, access_token")
+    .order("authorized_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (row?.shop_cipher) return row.shop_cipher as string;
+
+  // 2. Fetch from TikTok shops API
+  console.log("[order-ingest] shop_cipher not cached — calling /authorization/202309/shops");
+  const res = await getAuthorizedShops(accessToken, appKey, appSecret);
+
+  if (res.code !== 0 || !res.data?.shops?.length) {
+    console.error("[order-ingest] getAuthorizedShops failed:", res.code, res.message);
+    return "";
+  }
+
+  const cipher = res.data.shops[0].cipher;
+  const shopId = res.data.shops[0].id;
+
+  // 3. Write back to DB so we don't re-fetch next time
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (supabase as any)
+    .from("shop_tokens")
+    .update({ shop_cipher: cipher, shop_id: shopId, updated_at: new Date().toISOString() })
+    .eq("access_token", accessToken);
+
+  console.log(`[order-ingest] shop_cipher cached: ${cipher.slice(0, 20)}... (shop ${shopId})`);
+  return cipher;
 }
 
 // ─── Status mapping ───────────────────────────────────────────────────────────
@@ -101,19 +147,10 @@ export async function enrichOrderDetail(
     return;
   }
 
-  // Load shop_cipher (stored as shop_id in shop_tokens)
-  // In TikTok API 202309, shop_cipher is required for all order API calls
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: tokenRow } = await (supabase as any)
-    .from("shop_tokens")
-    .select("shop_id")
-    .order("authorized_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const shopCipher: string = tokenRow?.shop_id ?? "";
+  // Resolve shop_cipher — fetch from /authorization/202309/shops if not cached in DB
+  const shopCipher = await resolveShopCipher(accessToken, appKey, appSecret, supabase);
   if (!shopCipher) {
-    console.error("[order-ingest] No shop_cipher found in shop_tokens");
+    console.error("[order-ingest] Could not resolve shop_cipher — skipping Order Detail");
     return;
   }
 
