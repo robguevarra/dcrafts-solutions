@@ -17,7 +17,7 @@
 npm install
 
 # 2. Verify environment
-cat .env.local  # should have all 7 variables populated
+cat .env.local  # should have all 6+ variables populated
 
 # 3. Start dev server
 npm run dev
@@ -208,6 +208,29 @@ FROM shop_tokens;
 
 ---
 
+## TikTok: Manual Order Sync
+
+**Via UI (recommended):** Go to **Settings → Integrations** → click **Sync Orders Now**.
+- Pulls last 7 days of orders
+- Runs enrichment on each (full address available for orders past ON_HOLD)
+- Shows result inline
+
+**Via curl (admin session required):**
+```bash
+curl -X POST https://dcrafts.vercel.app/api/tiktok/sync?days=7 \
+  -H "Cookie: <your_admin_session_cookie>"
+# Returns: { ok: true, ingested: N, pages: N, shadow_mode: true/false }
+```
+
+**When to use:**
+- After re-authorizing OAuth (new scope added)
+- To fix orders with missing buyer name/phone (enriched during ON_HOLD)
+- After any webhook downtime
+
+> See [tiktok.md → Manual Sync](./tiktok.md#manual-sync--how-to-use) for full details.
+
+---
+
 ## Common Issues
 
 ### "Could not find table 'public.orders'"
@@ -227,6 +250,20 @@ The Supabase Realtime subscription failed. Check:
 3. Check that the webhook handler uses `after()` — not `void promise` (see tiktok.md)
 4. Look for `106011 Invalid shop_cipher` — trigger a resend to auto-repopulate cipher
 5. Check Supabase DB: `SELECT * FROM orders ORDER BY created_at DESC LIMIT 5;`
+
+### `105005 Access denied` in Vercel logs
+A required OAuth scope is missing from the access token.
+1. Go to Partner Center → App → API & Feature Management
+2. Enable the missing scope (e.g., `Order.Read`)
+3. Re-authorize via Settings → Integrations → **Re-authorize**
+4. Click **Sync Orders Now** to immediately re-pull orders with the new token
+
+### Orders show masked buyer name/phone (`M*** J**`)
+The order was enriched while in `ON_HOLD` status — TikTok doesn't return address data then.
+- Wait for the `AWAITING_SHIPMENT` webhook (∼1 hour), OR
+- Click **Sync Orders Now** (Settings → Integrations) to re-fetch with current status
+
+See [tiktok.md](./tiktok.md#buyer-namephone-showing-as-m-j-or-63951500-masked) for full explanation.
 
 ### TikTok OAuth "Authorization failed" toast
 See the Troubleshooting section in [tiktok.md](./tiktok.md).

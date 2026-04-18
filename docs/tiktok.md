@@ -1,6 +1,6 @@
 # TikTok Shop Integration
 
-> **Status:** OAuth connected · Webhooks active · Order enrichment live · CS API approval pending  
+> **Status:** OAuth connected · Webhooks active · Order enrichment live · Manual sync live · CS API approval pending  
 > **Last updated:** 2026-04-18  
 > **API version:** 202309 (versioned path endpoints)
 
@@ -30,9 +30,11 @@ TikTok Shop
   │    Returns 200 immediately, runs enrichment via after() post-response
   │
   ├─ Manual Sync (admin trigger)                app/api/tiktok/sync/route.ts
-  │    POST /api/tiktok/sync?days=3
-  │    Calls POST /order/202309/orders/search (pagination up to 10 pages)
+  │    POST /api/tiktok/sync?days=7
+  │    UI button: Settings → Integrations → "Sync Orders Now"
+  │    Calls POST /order/202309/orders/search (pagination up to 10 pages, 7-day window)
   │    Auth-guarded — requires logged-in admin session
+  │    ⭐ Use this to pull orders that are past ON_HOLD (address data available)
   │
   └─ Order Enrichment (automatic)              lib/tiktok/order-ingest.ts
        Triggered after every webhook + every sync item
@@ -239,6 +241,33 @@ Webhook received
 | `IN_TRANSIT`, `DELIVERED`, `COMPLETED` | `shipped` |
 | `CANCELLED`, `PARTIALLY_CANCELLED` | `cancelled` |
 
+### Buyer Data Availability by Order Status
+
+This is confirmed TikTok API 202309 behavior (from official docs):
+
+| Condition | `recipient_address` behavior |
+|-----------|-----------------------------|
+| Order is `UNPAID` or `ON_HOLD` | **Not returned at all** — field is null |
+| Order is `AWAITING_SHIPMENT`+ | Returned with full data (for FBS orders) |
+| Order uses platform logistics (FBT) | `name` and `phone_number` are **desensitized** (masked as `M*** J**`) |
+| Order uses seller logistics (FBS) | Full `name` and `phone_number` returned |
+
+**Why orders show masked/missing data after the first webhook:**
+
+```
+Order placed → status: ON_HOLD
+  └─ TikTok fires type=1 webhook immediately
+       └─ We call GET /order/202309/orders
+            └─ recipient_address = null (ON_HOLD restriction)
+
+~1 hour later → status: AWAITING_SHIPMENT
+  └─ TikTok fires type=1 webhook again
+       └─ We call GET /order/202309/orders
+            └─ recipient_address = { name, phone_number, full_address } ✅
+```
+
+**Workaround:** Use **Sync Orders Now** (Settings → Integrations) after orders move to `AWAITING_SHIPMENT` to pull full buyer data immediately without waiting for the second webhook.
+
 ---
 
 ## Partner Center Configuration
@@ -249,6 +278,19 @@ Webhook received
 | **Webhook URL** | `https://dcrafts.vercel.app/api/webhooks/tiktok` |
 | **Webhook Secret** | *(not used — signature uses `TTS_APP_SECRET`)* |
 | **Service ID** | `7628648618510272277` |
+
+### Required OAuth Scopes
+
+These must all be enabled in Partner Center → App → API & Feature Management **before** new tokens will include them.
+
+| Scope | Required For | Status |
+|-------|-------------|--------|
+| `Order.Read` | `GET /order/202309/orders` (enrichment + manual sync) | ✅ Required — add if missing |
+| `Shop.Read` | `GET /authorization/202309/shops` (shop_cipher resolution) | ✅ Required — add if missing |
+| `CS.MESSAGE_AND_ROOM.READ` | Read buyer messages | ⏳ Approval pending |
+| `CS.MESSAGE_AND_ROOM.WRITE` | Send bot replies | ⏳ Approval pending |
+
+> ⚠️ After adding a new scope in Partner Center, you **must re-run OAuth** (Settings → Integrations → Re-authorize) to get a token that includes it. Old tokens do not auto-update.
 
 ---
 
@@ -273,22 +315,68 @@ Webhook received
 
 Wrong hostname. The correct production API host is `open-api.tiktokglobalshop.com`. Check `lib/tiktok/api-client.ts` → `BASE_URL`.
 
+### `105005 Access denied — missing scope`
+
+The access token doesn't include the required OAuth scope for the endpoint called.
+
+1. Go to **Partner Center** → App → **API & Feature Management**
+2. Find and enable the missing scope (e.g., `Order.Read` for order endpoints)
+3. Re-authorize via **Settings → Integrations → Re-authorize** to get a new token with the scope
+
+> This is a Partner Center configuration problem, not a code bug. Old tokens do not retroactively gain new scopes.
+
 ### `106011 Invalid shop_cipher`
 
-The `shop_cipher` in DB is wrong or expired. Resolution:
+The `shop_cipher` in DB is wrong or empty. Resolution:
 1. Clear it: `UPDATE shop_tokens SET shop_cipher = NULL;`
-2. Trigger any webhook — `resolveShopCipher()` will fetch a fresh one from `/authorization/202309/shops`
+2. Trigger any webhook or click **Sync Orders Now** — `resolveShopCipher()` will fetch a fresh cipher from `/authorization/202309/shops` and cache it
 
-### Orders appearing with `—` for buyer name/phone
+Confirmed working cipher format: `ROW_0yUQYwAAAABwhFE_MV1ypFaCsdmr-gge` (starts with `ROW_`)
+
+### Buyer name/phone showing as `M*** J**` or `(+63)951*****00` (masked)
+
+Two possible causes per official TikTok docs:
+
+**Cause 1 — Order was fetched while still `ON_HOLD` (most common):**
+- `recipient_address` is completely unavailable during `ON_HOLD` and `UNPAID` status
+- TikTok fires a second type=1 webhook when status moves to `AWAITING_SHIPMENT` (~1 hour later)
+- Our handler re-runs enrichment on that second webhook → full data will be written
+- **Immediate fix:** Click **Sync Orders Now** in Settings to re-fetch orders that are now past `ON_HOLD`
+
+**Cause 2 — Order uses platform logistics (FBT):**
+- TikTok desensitizes `name` and `phone_number` for platform-fulfilled orders
+- No workaround — this is a TikTok privacy policy for FBT
+- Our shop uses **Fulfilled by Seller (FBS)** so this should not apply
+
+### Orders not appearing after webhook
 
 The enrichment step (`enrichOrderDetail`) isn't running. Common causes:
-- **Vercel Hobby + fire-and-forget**: make sure `after()` is used, not `void promise`
-- **shop_cipher error**: check for `106011` in logs
+- **`after()` missing**: ensure enrichment runs inside `after()`, not as `void promise`
+- **shop_cipher error**: check logs for `106011`
+- **Scope missing**: check logs for `105005` → add `Order.Read` scope in Partner Center
 - **API host wrong**: check for `ENOTFOUND` in logs
 
 ### `order_status` returning integers instead of strings
 
 Wrong API version. Ensure you're calling `/order/202309/orders` (not `/api/v2/order/detail`). The 202309 version uses string ENUMs (`UNPAID`, `AWAITING_SHIPMENT`, etc.).
+
+---
+
+## Manual Sync — How to Use
+
+**Location:** Settings → Integrations → **Sync Orders Now** button (blue, next to Re-authorize)
+
+**When to use:**
+- After granting a new scope and re-authorizing (to immediately pull recent orders)
+- To populate buyer address/phone for orders that were enriched during `ON_HOLD` (masked data)
+- After a webhook outage to catch any missed events
+- Any time you want orders from the last 7 days to be re-upserted with fresh data
+
+**What it does:**
+1. Calls `POST /order/202309/orders/search` (last 7 days, up to 200 orders)
+2. Upserts each order into the `orders` table
+3. Runs `enrichOrderDetail` on each — since these are existing orders past `ON_HOLD`, full address data is returned
+4. Shows result: `✅ Synced N order(s) from the last 7 days.`
 
 ---
 
