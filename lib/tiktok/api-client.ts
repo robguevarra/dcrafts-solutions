@@ -25,12 +25,17 @@ export interface TikTokApiResponse<T = unknown> {
   data?:       T;
 }
 
-// ─── Signing ──────────────────────────────────────────────────────────────────
-
+/**
+ * TikTok 202309 signing:
+ *   - GET:  wrap = appSecret + path + sorted_query_params + appSecret
+ *   - POST: wrap = appSecret + path + sorted_query_params + appSecret
+ *           (body is NOT included in the signature for POST endpoints)
+ *
+ * @see https://partner.tiktokshop.com/docv2/page/650a56d4defece02be6dce41
+ */
 function generateSign(
   path:      string,
   params:    Record<string, string>,
-  body:      string,
   appSecret: string
 ): string {
   const sorted = Object.entries(params)
@@ -39,7 +44,8 @@ function generateSign(
     .map(([k, v]) => `${k}${v}`)
     .join("");
 
-  const wrapped = `${appSecret}${path}${sorted}${body}${appSecret}`;
+  // Body is intentionally excluded — only query params are signed
+  const wrapped = `${appSecret}${path}${sorted}${appSecret}`;
   return crypto.createHmac("sha256", appSecret).update(wrapped).digest("hex");
 }
 
@@ -52,7 +58,7 @@ async function ttsGet<T>(
 ): Promise<TikTokApiResponse<T>> {
   const timestamp = String(Math.floor(Date.now() / 1000));
   const allParams: Record<string, string> = { ...queryParams, app_key: appKey, timestamp };
-  allParams.sign  = generateSign(path, allParams, "", appSecret);
+  allParams.sign  = generateSign(path, allParams, appSecret);
 
   const url = new URL(`${BASE_URL}${path}`);
   for (const [k, v] of Object.entries(allParams)) url.searchParams.set(k, v);
@@ -77,7 +83,8 @@ async function ttsPost<T>(
   const timestamp = String(Math.floor(Date.now() / 1000));
   const allParams: Record<string, string> = { ...queryParams, app_key: appKey, timestamp };
   const bodyStr   = JSON.stringify(body);
-  allParams.sign  = generateSign(path, allParams, bodyStr, appSecret);
+  // Body is NOT included in the signature for 202309 POST endpoints
+  allParams.sign  = generateSign(path, allParams, appSecret);
 
   const url = new URL(`${BASE_URL}${path}`);
   for (const [k, v] of Object.entries(allParams)) url.searchParams.set(k, v);
@@ -88,7 +95,6 @@ async function ttsPost<T>(
     body:    bodyStr,
   });
   const raw = await res.text();
-  console.log(`[tts-api] POST ${path} body sent:`, bodyStr);
   console.log(`[tts-api] POST ${path} HTTP ${res.status}:`, raw.slice(0, 500));
   return JSON.parse(raw) as TikTokApiResponse<T>;
 }
