@@ -41,15 +41,17 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 /**
- * TikTok 202309 signing.
- * wrap = appSecret + path + sorted_query_params + appSecret
- * Body is NOT included in the signature for POST endpoints.
+ * TikTok 202309 signing — confirmed production behavior:
+ *   GET:  wrap = appSecret + path + sorted_query_params + ""        + appSecret
+ *   POST: wrap = appSecret + path + sorted_query_params + body_json + appSecret
  *
- * @see https://partner.tiktokshop.com/docv2/page/650a56d4defece02be6dce41
+ * Body IS included in the signature for POST endpoints.
+ * shop_cipher must be a query param (not in body) for 202309.
  */
 async function generateSign(
   path:      string,
   params:    Record<string, string>,
+  body:      string,
 ): Promise<string> {
   const excluded = new Set(["sign", "access_token"]);
   const sorted = Object.entries(params)
@@ -58,7 +60,7 @@ async function generateSign(
     .map(([k, v]) => `${k}${v}`)
     .join("");
 
-  const input = `${TTS_APP_SECRET}${path}${sorted}${TTS_APP_SECRET}`;
+  const input = `${TTS_APP_SECRET}${path}${sorted}${body}${TTS_APP_SECRET}`;
 
   const key = await crypto.subtle.importKey(
     "raw",
@@ -76,10 +78,11 @@ async function generateSign(
 async function buildSignedUrl(
   path:        string,
   queryParams: Record<string, string>,
+  body:        string,
 ): Promise<string> {
   const timestamp = String(Math.floor(Date.now() / 1000));
   const allParams: Record<string, string> = { ...queryParams, app_key: TTS_APP_KEY, timestamp };
-  allParams.sign = await generateSign(path, allParams);
+  allParams.sign = await generateSign(path, allParams, body);
 
   const qs = new URLSearchParams(allParams).toString();
   return `${TIKTOK_API_BASE}${path}?${qs}`;
@@ -142,11 +145,6 @@ Deno.serve(async (req: Request) => {
   const now              = Math.floor(Date.now() / 1000);
   const fifteenMinAgo    = now - 15 * 60;
 
-  // shop_cipher is a QUERY PARAM for 202309, not a body field
-  const url = await buildSignedUrl("/order/202309/orders/search", {
-    shop_cipher: tokenRow.shop_cipher,
-  });
-
   const body = JSON.stringify({
     update_time_from: fifteenMinAgo,
     update_time_to:   now,
@@ -154,6 +152,11 @@ Deno.serve(async (req: Request) => {
     sort_field:       "UPDATE_TIME",
     sort_order:       "DESC",
   });
+
+  // shop_cipher in query param, body included in signature
+  const url = await buildSignedUrl("/order/202309/orders/search", {
+    shop_cipher: tokenRow.shop_cipher,
+  }, body);
 
   const res = await fetch(url, {
     method:  "POST",

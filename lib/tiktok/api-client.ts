@@ -26,16 +26,24 @@ export interface TikTokApiResponse<T = unknown> {
 }
 
 /**
- * TikTok 202309 signing:
- *   - GET:  wrap = appSecret + path + sorted_query_params + appSecret
- *   - POST: wrap = appSecret + path + sorted_query_params + appSecret
- *           (body is NOT included in the signature for POST endpoints)
+ * TikTok 202309 signing — confirmed production behavior:
+ *   GET:  wrap = appSecret + path + sorted_query_params + ""      + appSecret
+ *   POST: wrap = appSecret + path + sorted_query_params + body_json + appSecret
+ *
+ * The body (JSON string) IS included in the signature for POST endpoints.
+ * shop_cipher must be a query parameter (not in the body) for 202309 POST endpoints.
+ *
+ * Evidence:
+ *   - Body excluded → 401 "Invalid sign" (106001)
+ *   - Body included, shop_cipher in body → 400 "PageSize missing" (36009004, sign OK)
+ *   - Body included, shop_cipher in query → expected 200 ✓
  *
  * @see https://partner.tiktokshop.com/docv2/page/650a56d4defece02be6dce41
  */
 function generateSign(
   path:      string,
   params:    Record<string, string>,
+  body:      string,
   appSecret: string
 ): string {
   const sorted = Object.entries(params)
@@ -44,8 +52,7 @@ function generateSign(
     .map(([k, v]) => `${k}${v}`)
     .join("");
 
-  // Body is intentionally excluded — only query params are signed
-  const wrapped = `${appSecret}${path}${sorted}${appSecret}`;
+  const wrapped = `${appSecret}${path}${sorted}${body}${appSecret}`;
   return crypto.createHmac("sha256", appSecret).update(wrapped).digest("hex");
 }
 
@@ -58,7 +65,7 @@ async function ttsGet<T>(
 ): Promise<TikTokApiResponse<T>> {
   const timestamp = String(Math.floor(Date.now() / 1000));
   const allParams: Record<string, string> = { ...queryParams, app_key: appKey, timestamp };
-  allParams.sign  = generateSign(path, allParams, appSecret);
+  allParams.sign  = generateSign(path, allParams, "", appSecret);
 
   const url = new URL(`${BASE_URL}${path}`);
   for (const [k, v] of Object.entries(allParams)) url.searchParams.set(k, v);
@@ -83,8 +90,8 @@ async function ttsPost<T>(
   const timestamp = String(Math.floor(Date.now() / 1000));
   const allParams: Record<string, string> = { ...queryParams, app_key: appKey, timestamp };
   const bodyStr   = JSON.stringify(body);
-  // Body is NOT included in the signature for 202309 POST endpoints
-  allParams.sign  = generateSign(path, allParams, appSecret);
+  // Body IS included in signature for POST — confirmed by 401 when excluded
+  allParams.sign  = generateSign(path, allParams, bodyStr, appSecret);
 
   const url = new URL(`${BASE_URL}${path}`);
   for (const [k, v] of Object.entries(allParams)) url.searchParams.set(k, v);
