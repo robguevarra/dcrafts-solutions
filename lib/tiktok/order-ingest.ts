@@ -165,24 +165,36 @@ export async function enrichOrderDetail(
     const detail: TikTokOrderDetail = res.data.orders[0];
     const addr = detail.recipient_address;
 
-    // Prefer full_address from API; fallback to manual concat
+    // 202507: prefer address_detail (barangay/district); fallback to full_address or manual concat
     const fullAddress = addr?.full_address
       ?? (addr
-        ? [addr.name, addr.address_line1, addr.address_line2, addr.city, addr.state, addr.postal_code, addr.country]
-            .filter(Boolean).join(", ")
+        ? [
+            addr.name,
+            addr.address_detail,
+            addr.address_line1,
+            addr.address_line2,
+            addr.postal_code,
+            addr.region_code,
+          ].filter(Boolean).join(", ")
+        : null);
+
+    // Prefer split name fields (202507); fallback to combined name
+    const recipientName = addr?.name
+      ?? (addr?.first_name || addr?.last_name
+        ? [addr.first_name, addr.last_name].filter(Boolean).join(" ")
         : null);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any)
       .from("orders")
       .update({
-        buyer_id:          detail.user_id           ?? null,  // 202309 uses user_id
+        buyer_id:          detail.user_id           ?? null,
         buyer_phone:       addr?.phone_number        ?? null,
-        recipient_name:    addr?.name                ?? null,
+        recipient_name:    recipientName,
         recipient_phone:   addr?.phone_number        ?? null,
         recipient_address: fullAddress,
         items_json:        detail.line_items          ?? [],
-        total_amount:      detail.payment?.total_amount ?? null,   // 202309: payment not payment_info
+        total_amount:      detail.payment?.total_amount ?? null,
         currency:          detail.payment?.currency     ?? null,
         fulfillment_type:  detail.fulfillment_type      ?? null,
         tiktok_created_at: detail.create_time ? new Date(detail.create_time * 1000).toISOString() : null,
@@ -199,8 +211,13 @@ export async function enrichOrderDetail(
       return;
     }
 
+    // Log shipping_type so admins know why phone may be masked
+    const maskedNote = detail.shipping_type === "TIKTOK"
+      ? " (PII masked — TikTok platform logistics)"
+      : "";
     console.log(
-      `[order-ingest] ✅ Enriched ${orderId} — ${addr?.name ?? "?"} / ${addr?.phone_number ?? "no phone"} / ${(detail.line_items ?? []).length} items`
+      `[order-ingest] ✅ Enriched ${orderId} [${detail.shipping_type ?? "?"}]${maskedNote}` +
+      ` — ${recipientName ?? "?"} / ${addr?.phone_number ?? "no phone"} / ${(detail.line_items ?? []).length} items`
     );
   } catch (err) {
     console.error(`[order-ingest] enrichOrderDetail threw for ${orderId}:`, err);

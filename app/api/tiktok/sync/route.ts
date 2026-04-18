@@ -83,7 +83,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   do {
     const res = await getOrderList({
       createTimeGe:   since,
-      pageSize:        20,
+      pageSize:        100,  // SDK max
       pageToken,
       sortField:       "create_time",
       sortOrder:       "DESC",
@@ -127,11 +127,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     pageToken = res.data.next_page_token ?? undefined;
     pages++;
 
-    // Safety cap: 10 pages (200 orders per run)
-    if (pages >= 10) break;
+    // Safety cap: 50 pages (5,000 orders per run)
+    if (pages >= 50) break;
   } while (pageToken);
 
   console.log(`[sync/tiktok] ✅ Done — ${ingested} orders across ${pages} page(s)`);
+
+  // ── Backfill: re-enrich orders that were ingested via webhook (no detail yet) ──
+  // These are orders with NULL detail_fetched_at from before the sync was working.
+  const { data: staleOrders } = await (supabase as any)
+    .from("orders")
+    .select("platform_order_id")
+    .eq("platform", "tiktok")
+    .is("detail_fetched_at", null)
+    .limit(50);  // Backfill up to 50 stale orders per run
+
+  if (staleOrders?.length) {
+    console.log(`[sync/tiktok] Backfilling detail for ${staleOrders.length} stale orders...`);
+    await Promise.allSettled(
+      (staleOrders as { platform_order_id: string }[]).map((row) =>
+        ingestOrder(
+          {
+            platform_order_id: row.platform_order_id,
+            raw_payload:       {},
+            status:            "pending_spec",
+            shadow_mode:       shadowMode,
+          },
+          tokenRow.access_token,
+          supabase
+        )
+      )
+    );
+    console.log(`[sync/tiktok] Backfill complete.`);
+  }
 
   return NextResponse.json({
     ok:          true,

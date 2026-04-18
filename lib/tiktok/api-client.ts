@@ -141,13 +141,17 @@ export interface TikTokShop {
 }
 
 /**
- * GET Order Detail (API version 202309).
+ * GET Order Detail (API version 202507).
  *
- * Endpoint: GET /order/202309/orders
- * Required params: ids (comma-sep order IDs, max 50), shop_cipher
- * shop_cipher must come from getAuthorizedShops(), NOT from the OAuth callback.
+ * Endpoint: GET /order/202507/orders
+ * Required query params: ids (comma-sep, max 50), shop_cipher
  *
- * @see https://partner.tiktokshop.com/docv2/page/get-order-detail-202309
+ * ⚠️  PII masking note (platform policy, not fixable via API version):
+ *   When shipping_type = "TIKTOK" (platform logistics), TikTok masks
+ *   recipient name and phone_number. Only SELLER-shipped orders expose
+ *   full contact details. This applies to ALL API versions.
+ *
+ * @see https://partner.tiktokshop.com/docv2/page/get-order-detail-202507
  */
 export async function getOrderDetail(
   orderId:     string,
@@ -157,7 +161,7 @@ export async function getOrderDetail(
   appSecret:   string
 ): Promise<TikTokApiResponse<{ orders: TikTokOrderDetail[] }>> {
   return ttsGet<{ orders: TikTokOrderDetail[] }>(
-    "/order/202309/orders",
+    "/order/202507/orders",
     { ids: orderId, shop_cipher: shopCipher },
     accessToken,
     appKey,
@@ -219,37 +223,54 @@ export async function getOrderList(params: OrderListParams): Promise<TikTokApiRe
     params.appSecret
   );
 }
-// ─── Response Type Definitions (202309) ──────────────────────────────────────
+// ─── Response Type Definitions (202507) ──────────────────────────────────────
 
 export interface TikTokOrderDetail {
   id:                string;
   status:            string;
-  create_time:       number;
-  update_time:       number;
-  user_id?:          string;   // buyer identifier in 202309 (not buyer_uid)
+  create_time?:      number;
+  update_time?:      number;
+  user_id?:          string;    // buyer identifier
+  buyer_email?:      string;    // anonymized/masked email
+  buyer_nickname?:   string;
   buyer_message?:    string;
-  fulfillment_type?: string;   // "FULFILLED_BY_SELLER" | "FULFILLMENT_BY_TIKTOK"
-  is_gift?:          boolean;
+  /** "FULFILLMENT_BY_SELLER" | "FULFILLMENT_BY_TIKTOK" */
+  fulfillment_type?: string;
+  /**
+   * "TIKTOK" = platform logistics (name/phone will be masked by TikTok).
+   * "SELLER" = seller ships directly (full PII returned).
+   */
+  shipping_type?:    string;
+  shipping_provider?:   string;
+  tracking_number?:     string;
   is_sample_order?:  boolean;
+  is_cod?:           boolean;
   payment?: {
-    currency?:     string;
-    total_amount?: string;
-    sub_total?:    string;
-    shipping_fee?: string;
-    seller_discount?: string;
+    currency?:          string;
+    total_amount?:      string;
+    sub_total?:         string;
+    shipping_fee?:      string;
+    seller_discount?:   string;
     platform_discount?: string;
   };
   recipient_address?: {
-    name?:         string;
-    phone_number?: string;
-    full_address?: string;
-    address_line1?: string;
-    address_line2?: string;
-    city?:          string;
-    state?:         string;
-    country?:       string;
-    postal_code?:   string;
-    district_info_list?: Array<{ address_level_name: string; address_name: string }>;
+    /** Full name. Masked to partial if shipping_type=TIKTOK. */
+    name?:          string;
+    first_name?:    string;
+    last_name?:     string;
+    /** Phone. Masked to partial (e.g. +63981***85) if shipping_type=TIKTOK. */
+    phone_number?:  string;
+    /** Complete address string. */
+    full_address?:  string;
+    /** Detailed address (barangay/district). */
+    address_detail?:  string;
+    address_line1?:   string;
+    address_line2?:   string;
+    address_line3?:   string;
+    address_line4?:   string;
+    postal_code?:     string;
+    region_code?:     string;
+    district_info?: Array<{ address_level_name: string; address_name: string }>;
   };
   line_items?: TikTokLineItem[];
   packages?:   TikTokPackage[];
