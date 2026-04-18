@@ -226,11 +226,33 @@ function IntegrationsSection({ tiktokConnection }: { tiktokConnection: TikTokCon
   const accessExpired  = isConnected && new Date(tiktokConnection!.accessExpiry)  < new Date();
   const refreshExpired = isConnected && new Date(tiktokConnection!.refreshExpiry) < new Date();
   const needsReauth    = refreshExpired;
-  // connection health: ok if connected and not expired, partial if access expired but refresh ok
   const health: boolean | "partial" = !isConnected ? false
     : needsReauth ? false
     : accessExpired ? "partial"
     : true;
+
+  // ── Manual sync state ─────────────────────────────────────────────
+  const [syncing,  setSyncing]  = useState(false);
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; ingested?: number; error?: string } | null>(null);
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch("/api/tiktok/sync?days=7", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) {
+        setSyncResult({ ok: false, error: json.error ?? `HTTP ${res.status}` });
+      } else {
+        setSyncResult({ ok: true, ingested: json.ingested });
+      }
+    } catch (e) {
+      setSyncResult({ ok: false, error: String(e) });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <div className="space-y-8">
       {/* TikTok Shop */}
@@ -342,23 +364,56 @@ function IntegrationsSection({ tiktokConnection }: { tiktokConnection: TikTokCon
               <CodeBlock value={TIKTOK_CALLBACK_URL} label="callback-url" />
             </div>
 
-            {/* Connect / Re-authorize button */}
-            <a
-              id="btn-connect-tiktok"
-              href={TIKTOK_AUTH_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold transition-opacity hover:opacity-80"
-              style={{
-                background: isConnected ? "var(--bg-overlay)" : "var(--signal-amber)",
-                color: isConnected ? "var(--text-primary)" : "var(--bg-void)",
-                border: isConnected ? "1px solid var(--border-dim)" : "none",
-                borderRadius: 4,
-              }}
-            >
-              {isConnected ? "Re-authorize" : "Connect TikTok Shop"}
-              <ExternalLink size={13} />
-            </a>
+            {/* Connect / Re-authorize | Sync Now buttons */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <a
+                id="btn-connect-tiktok"
+                href={TIKTOK_AUTH_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold transition-opacity hover:opacity-80"
+                style={{
+                  background: isConnected ? "var(--bg-overlay)" : "var(--signal-amber)",
+                  color: isConnected ? "var(--text-primary)" : "var(--bg-void)",
+                  border: isConnected ? "1px solid var(--border-dim)" : "none",
+                  borderRadius: 4,
+                }}
+              >
+                {isConnected ? "Re-authorize" : "Connect TikTok Shop"}
+                <ExternalLink size={13} />
+              </a>
+
+              {/* Manual sync — only shown when connected */}
+              {isConnected && !needsReauth && (
+                <button
+                  id="btn-sync-tiktok-orders"
+                  onClick={handleSync}
+                  disabled={syncing}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold transition-opacity hover:opacity-80 disabled:opacity-50"
+                  style={{
+                    background: "color-mix(in srgb, var(--signal-blue) 15%, transparent)",
+                    color: "var(--signal-blue)",
+                    border: "1px solid color-mix(in srgb, var(--signal-blue) 30%, transparent)",
+                    borderRadius: 4,
+                  }}
+                >
+                  <RefreshCw size={13} className={syncing ? "animate-spin" : ""} />
+                  {syncing ? "Syncing..." : "Sync Orders Now"}
+                </button>
+              )}
+            </div>
+
+            {/* Sync result feedback */}
+            {syncResult && (
+              <p
+                className="text-[11px] mt-2"
+                style={{ color: syncResult.ok ? "var(--signal-green)" : "var(--signal-red)" }}
+              >
+                {syncResult.ok
+                  ? `✅ Synced ${syncResult.ingested ?? 0} order(s) from the last 7 days.`
+                  : `❌ Sync failed: ${syncResult.error}`}
+              </p>
+            )}
           </div>
 
           {/* Webhook Config */}
