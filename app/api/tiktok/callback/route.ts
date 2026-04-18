@@ -54,23 +54,31 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // shop_id is NOT returned in redirect — comes from token response as open_id
   let tokenData: TikTokTokenResponse
   try {
-    const res = await fetch('https://auth.tiktok-shops.com/api/v2/token/get', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        app_key:    appKey,
-        app_secret: appSecret,
-        auth_code:  code,
-        grant_type: 'authorized_code',
-      }),
-    })
+    // TikTok's v2 token API takes params as query string, not JSON body
+    const tokenUrl = new URL('https://auth.tiktok-shops.com/api/v2/token/get')
+    tokenUrl.searchParams.set('app_key',    appKey)
+    tokenUrl.searchParams.set('app_secret', appSecret)
+    tokenUrl.searchParams.set('auth_code',  code)
+    tokenUrl.searchParams.set('grant_type', 'authorized_code')
 
-    const json = await res.json() as { code: number; message: string; data?: TikTokTokenResponse }
+    const res     = await fetch(tokenUrl.toString(), { method: 'POST' })
+    const rawText = await res.text()
 
-    console.log('[tiktok/callback] Token exchange response:', JSON.stringify(json, null, 2))
+    // Log raw response before parsing — essential for debugging TikTok API quirks
+    console.log('[tiktok/callback] Raw token response (HTTP', res.status, '):', rawText)
+
+    let json: { code: number; message: string; data?: TikTokTokenResponse }
+    try {
+      json = JSON.parse(rawText)
+    } catch {
+      console.error('[tiktok/callback] Response is not valid JSON:', rawText)
+      return NextResponse.redirect(
+        new URL('/admin/settings?tiktok_auth=error&reason=invalid_response_from_tiktok', req.nextUrl.origin)
+      )
+    }
 
     if (json.code !== 0 || !json.data) {
-      console.error('[tiktok/callback] Token exchange failed:', json.message, json.code)
+      console.error('[tiktok/callback] Token exchange failed — code:', json.code, 'message:', json.message)
       return NextResponse.redirect(
         new URL(
           `/admin/settings?tiktok_auth=error&reason=${encodeURIComponent(json.message ?? 'token_exchange_failed')}`,
@@ -81,7 +89,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     tokenData = json.data
   } catch (err) {
-    console.error('[tiktok/callback] Network error during token exchange:', err)
+    console.error('[tiktok/callback] Fetch error during token exchange:', err)
     return NextResponse.redirect(
       new URL('/admin/settings?tiktok_auth=error&reason=network_error', req.nextUrl.origin)
     )
