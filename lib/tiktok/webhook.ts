@@ -3,41 +3,48 @@ import crypto from "crypto";
 /**
  * Verifies a TikTok Shop webhook HMAC-SHA256 signature.
  *
- * Per TikTok docs: signature = HMAC-SHA256(app_key + raw_body, app_secret)
- * The hash is compared against the `x-tts-signature` header.
+ * TikTok webhook verification candidates — we try multiple formats
+ * because the official docs mix webhook verification with REST API signing:
  *
- * Important: the secret is TTS_APP_SECRET (same as the OAuth app secret),
- * NOT a separate webhook secret. The input is app_key concatenated with
- * the raw request body (no separator).
+ *   Format A (most sources): HMAC-SHA256(rawBody, app_secret)
+ *   Format B (some sources): HMAC-SHA256(app_key + rawBody, app_secret)
  *
- * @see https://partner.tiktokshop.com/docv2/page/6507ead7b99d5302be949ba9
+ * @returns { matched: boolean, format: string | null }
  */
 export function verifyTikTokWebhookSignature(
   rawBody:           string,
   receivedSignature: string,
   appKey:            string,
   appSecret:         string
-): boolean {
-  // Signature base: app_key + raw_body (no separator, no encoding)
-  const sigBase = appKey + rawBody;
-
-  const computedSig = crypto
-    .createHmac("sha256", appSecret)
-    .update(sigBase)
-    .digest("hex");
-
+): { matched: boolean; format: string | null } {
   const received = receivedSignature.replace(/^sha256=/, "");
 
-  // Constant-time comparison to prevent timing attacks
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(computedSig, "hex"),
-      Buffer.from(received,    "hex")
-    );
-  } catch {
-    // Buffer lengths differ → signature is wrong
-    return false;
+  if (!received || received.length < 10) {
+    return { matched: false, format: null };
   }
+
+  const candidates: Array<{ format: string; input: string }> = [
+    { format: "rawBody only",     input: rawBody },
+    { format: "appKey + rawBody", input: appKey + rawBody },
+    { format: "rawBody + appKey", input: rawBody + appKey },
+  ];
+
+  for (const { format, input } of candidates) {
+    const computed = crypto
+      .createHmac("sha256", appSecret)
+      .update(input)
+      .digest("hex");
+
+    try {
+      if (crypto.timingSafeEqual(Buffer.from(computed, "hex"), Buffer.from(received, "hex"))) {
+        return { matched: true, format };
+      }
+    } catch {
+      // Buffer length mismatch — not hex or wrong length
+    }
+  }
+
+  return { matched: false, format: null };
 }
 
 /**
@@ -51,10 +58,10 @@ export function normalizeTikTokOrder(payload: TikTokWebhookPayload): NormalizedO
     platform_order_id: data.order_id,
     buyer_id:          data.buyer_uid      ?? null,
     buyer_name:        data.buyer_username  ?? null,
-    buyer_phone:       null, // available only via GetOrderDetail API
+    buyer_phone:       null,
     raw_payload:       payload as unknown as Record<string, unknown>,
     status:            mapTikTokStatus(data.order_status),
-    shadow_mode:       true, // overwritten at ingestion time from feature_flags
+    shadow_mode:       true,
   };
 }
 
@@ -72,10 +79,10 @@ function mapTikTokStatus(ttsStatus: string): DatabaseOrderStatus {
   return map[ttsStatus] ?? "pending_spec";
 }
 
-// ─── Webhook Payload Types ─────────────────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TikTokWebhookPayload {
-  type:      number;   // 1 = ORDER_STATUS_CHANGE, 2 = reverse events, etc.
+  type:      number;
   shop_id:   string;
   timestamp: number;
   data:      TikTokOrderData | Record<string, unknown>;
