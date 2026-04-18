@@ -41,7 +41,7 @@ yarn-error.log*
 next-env.d.ts
 
 # TikTok SDK reference — not part of Next.js app
-/Node.js SDK/
+/Node.js SDK*/
 
 # Brainstorm and planning docs (not needed in repo)
 dcrafts_brainstorm*.md

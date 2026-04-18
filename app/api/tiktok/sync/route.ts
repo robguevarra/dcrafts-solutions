@@ -24,7 +24,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const days  = Math.min(Number(req.nextUrl.searchParams.get("days") ?? "3"), 7);
+  const days  = Math.min(Number(req.nextUrl.searchParams.get("days") ?? "7"), 7);
   const since = Math.floor((Date.now() - days * 86_400_000) / 1000); // epoch seconds
 
   const supabase = createServiceClient();
@@ -82,13 +82,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   do {
     const res = await getOrderList({
-      createTimeFrom: since,
-      pageSize:       20,
+      createTimeGe:   since,
+      pageSize:        20,
       pageToken,
-      sortField:      "CREATE_TIME",
-      sortOrder:      "DESC",
+      sortField:       "create_time",
+      sortOrder:       "DESC",
       shopCipher,
-      accessToken:    tokenRow.access_token,
+      accessToken:     tokenRow.access_token,
       appKey,
       appSecret,
     });

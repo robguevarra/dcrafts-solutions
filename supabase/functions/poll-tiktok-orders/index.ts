@@ -14,7 +14,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
  *   - Uses POST /order/202309/orders/search
  *   - shop_cipher (not shop_id) goes in the QUERY STRING
  *   - All search filters go in the JSON body
- *   - Body is NOT included in the HMAC signature
+ *   - Body IS included in the HMAC signature for POST endpoints
  *   - access_token pulled from shop_tokens table (not a static env var)
  *
  * @see https://partner.tiktokshop.com/docv2/page/get-order-list-202309

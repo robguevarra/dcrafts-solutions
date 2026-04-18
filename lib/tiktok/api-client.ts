@@ -168,14 +168,20 @@ export async function getOrderDetail(
 /**
  * POST Get Order List (API version 202309).
  *
- * Endpoint: POST /order/202309/orders/search
- * Required body: create_time_from, shop_cipher
+ * Per official SDK (orderV202309Api.ts lines 224-257):
+ *   QUERY PARAMS (signed): page_size, sort_order, sort_field, page_token, shop_cipher
+ *   BODY (filter only):    create_time_ge, create_time_lt, update_time_ge, update_time_lt, order_status
+ *
+ *   NOTE: Time fields use _ge/_lt suffix (NOT _from/_to or _from/_to).
  *
  * @see https://partner.tiktokshop.com/docv2/page/get-order-list-202309
  */
-export async function getOrderList(params: {
-  createTimeFrom: number;    // epoch seconds
-  createTimeTo?:  number;
+export interface OrderListParams {
+  createTimeGe?:  number;
+  createTimeLt?:  number;
+  updateTimeGe?:  number;
+  updateTimeLt?:  number;
+  orderStatus?:   string;
   pageSize?:      number;
   pageToken?:     string;
   sortField?:     string;
@@ -184,28 +190,35 @@ export async function getOrderList(params: {
   accessToken:    string;
   appKey:         string;
   appSecret:      string;
-}): Promise<TikTokApiResponse<OrderListData>> {
-  // shop_cipher is a QUERY param for POST /order/202309/orders/search,
-  // not a body field. Placing it in the body breaks the request signature.
-  const body: Record<string, unknown> = {
-    create_time_from: params.createTimeFrom,
-    page_size:        params.pageSize   ?? 20,
-    sort_field:       params.sortField  ?? "CREATE_TIME",
-    sort_order:       params.sortOrder  ?? "DESC",
+}
+
+export async function getOrderList(params: OrderListParams): Promise<TikTokApiResponse<OrderListData>> {
+  // QUERY PARAMS — pagination & shop (all included in HMAC signature)
+  const queryParams: Record<string, string> = {
+    shop_cipher: params.shopCipher,
+    page_size:   String(params.pageSize ?? 20),
+    sort_field:  params.sortField ?? 'create_time',
+    sort_order:  params.sortOrder ?? 'DESC',
   };
-  if (params.createTimeTo) body.create_time_to = params.createTimeTo;
-  if (params.pageToken)    body.page_token     = params.pageToken;
+  if (params.pageToken) queryParams.page_token = params.pageToken;
+
+  // BODY — filter criteria only (also included in HMAC signature)
+  const body: Record<string, unknown> = {};
+  if (params.createTimeGe !== undefined) body.create_time_ge = params.createTimeGe;
+  if (params.createTimeLt !== undefined) body.create_time_lt = params.createTimeLt;
+  if (params.updateTimeGe !== undefined) body.update_time_ge = params.updateTimeGe;
+  if (params.updateTimeLt !== undefined) body.update_time_lt = params.updateTimeLt;
+  if (params.orderStatus)               body.order_status   = params.orderStatus;
 
   return ttsPost<OrderListData>(
-    "/order/202309/orders/search",
-    { shop_cipher: params.shopCipher },  // ← query param, not body
+    '/order/202309/orders/search',
+    queryParams,
     body,
     params.accessToken,
     params.appKey,
     params.appSecret
   );
 }
-
 // ─── Response Type Definitions (202309) ──────────────────────────────────────
 
 export interface TikTokOrderDetail {
