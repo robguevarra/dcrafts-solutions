@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { verifyTikTokWebhookSignature } from "@/lib/tiktok/webhook";
 import { createServiceClient } from "@/lib/supabase/server";
 import {
@@ -11,17 +11,16 @@ import {
 /**
  * POST /api/webhooks/tiktok
  *
- * Handles TikTok Shop webhook events (type 1, 2, 4).
+ * Handles TikTok Shop webhook events (type 1, 2, 4, 11).
  *
- * ⚠️  SIGNATURE DEBUG MODE ACTIVE
- * We are logging the HMAC format that matches so we can lock down
- * the correct algorithm. Once confirmed, DEBUG_SIG_BYPASS will be removed.
+ * Critical: uses Next.js `after()` to run order enrichment AFTER the 200
+ * response is flushed. Vercel guarantees this runs to completion before
+ * terminating the function — unlike `void promise` which gets killed on flush.
  *
- * Current behavior: accept all requests, log signature result.
- * Real orders flow through — we're in shadow_mode so no external writes.
+ * ⚠️  SIGNATURE DEBUG MODE ACTIVE (DEBUG_SIG_BYPASS = true)
+ * Remove once correct HMAC format is confirmed in logs.
  */
 
-// Set to false once we've confirmed the correct HMAC format in logs
 const DEBUG_SIG_BYPASS = true;
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -30,7 +29,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     ?? req.headers.get("Authorization")
     ?? "";
 
-  // ── Log ALL incoming headers for one-time forensics ──────────────────────
+  // Log ALL headers for one-time forensics
   const headerMap: Record<string, string> = {};
   req.headers.forEach((val, key) => { headerMap[key] = val; });
   console.log("[webhook/tiktok] Headers:", JSON.stringify(headerMap));
@@ -45,7 +44,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
-  // ── Probe all HMAC formats ────────────────────────────────────────────────
+  // Try all HMAC formats — log which one matches
   const { matched, format } = verifyTikTokWebhookSignature(
     rawBody, signature, appKey, appSecret
   );
@@ -54,24 +53,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     console.log(`[webhook/tiktok] ✅ Signature MATCHED using format: "${format}"`);
   } else {
     console.warn(
-      `[webhook/tiktok] ⚠️  Signature did NOT match any format.`,
-      `sig_received=${signature.slice(0, 30)}...`,
-      `bypass=${DEBUG_SIG_BYPASS}`
+      `[webhook/tiktok] ⚠️  No HMAC format matched.`,
+      `sig=${signature.slice(0, 40)}... bypass=${DEBUG_SIG_BYPASS}`
     );
-
     if (!DEBUG_SIG_BYPASS) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    // In debug mode: continue processing so real orders aren't dropped
   }
 
-  // Ack TikTok immediately, process async
-  void processAsync(rawBody, appKey, appSecret);
+  // ── Use after() so Vercel runs this to completion AFTER the 200 is sent ──
+  // Without after(), the function is killed on flush and enrichment never runs.
+  after(async () => {
+    await processAsync(rawBody, appKey, appSecret);
+  });
 
   return NextResponse.json({ ok: true }, { status: 200 });
 }
 
-// ─── Async handler ────────────────────────────────────────────────────────────
+// ─── Post-response processing ─────────────────────────────────────────────────
 
 async function processAsync(
   rawBody:   string,
@@ -90,7 +89,7 @@ async function processAsync(
 
   const supabase = createServiceClient();
 
-  // Load access_token for Order Detail enrichment
+  // Access token for Order Detail enrichment
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: tokenRow } = await (supabase as any)
     .from("shop_tokens")
@@ -100,6 +99,10 @@ async function processAsync(
     .maybeSingle();
 
   const accessToken: string = tokenRow?.access_token ?? "";
+
+  if (!accessToken) {
+    console.warn("[webhook/tiktok] No access_token in shop_tokens — enrichment will be skipped");
+  }
 
   // Shadow mode flag
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -112,7 +115,7 @@ async function processAsync(
 
   switch (payload.type) {
 
-    // ── Order Status Change (type 1) ────────────────────────────────────────
+    // ── Order Status Change ─────────────────────────────────────────────────
     case 1: {
       const data = payload.data as OrderStatusData;
       if (!data?.order_id) {
@@ -120,6 +123,7 @@ async function processAsync(
         return;
       }
 
+      // ingestOrder: upserts minimal row, then awaits Order Detail enrichment
       await ingestOrder(
         {
           platform_order_id: data.order_id,
@@ -138,13 +142,10 @@ async function processAsync(
       break;
     }
 
-    // ── Reverse / Cancel / Return (type 2) ──────────────────────────────────
+    // ── Reverse / Cancel / Return ───────────────────────────────────────────
     case 2: {
       const data = payload.data as ReverseEventData;
-      if (!data?.order_id) {
-        console.warn("[webhook/tiktok] type=2 missing order_id");
-        return;
-      }
+      if (!data?.order_id) { return; }
 
       await handleReverseEvent(
         {
@@ -160,32 +161,31 @@ async function processAsync(
       break;
     }
 
-    // ── Cancellation Status Change (type 11) ─────────────────────────────────
-    // Same structure as type 2 in our model
+    // ── Cancellation Status Change ──────────────────────────────────────────
     case 11: {
       const data = payload.data as ReverseEventData;
-      if (data?.order_id) {
-        await handleReverseEvent(
-          {
-            order_id:             data.order_id,
-            reverse_order_status: data.reverse_order_status ?? 0,
-            reverse_event_type:   "CANCELLATION_STATUS_CHANGE",
-            reverse_type:         1,
-            update_time:          data.update_time ?? payload.timestamp,
-          } satisfies ReverseEvent,
-          supabase
-        );
-      }
+      if (!data?.order_id) { return; }
+
+      await handleReverseEvent(
+        {
+          order_id:             data.order_id,
+          reverse_order_status: data.reverse_order_status ?? 0,
+          reverse_event_type:   "CANCELLATION_STATUS_CHANGE",
+          reverse_type:         1,
+          update_time:          data.update_time ?? payload.timestamp,
+        } satisfies ReverseEvent,
+        supabase
+      );
       break;
     }
 
-    // ── Recipient Address Update (type 4) ───────────────────────────────────
+    // ── Recipient Address Update ────────────────────────────────────────────
     case 4: {
       const data = payload.data as { order_id?: string };
       if (data?.order_id && accessToken) {
         const { enrichOrderDetail } = await import("@/lib/tiktok/order-ingest");
         await enrichOrderDetail(data.order_id, accessToken, supabase);
-        console.log(`[webhook/tiktok] Address update re-enriched: ${data.order_id}`);
+        console.log(`[webhook/tiktok] Address re-enriched: ${data.order_id}`);
       }
       break;
     }

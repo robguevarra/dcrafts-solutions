@@ -168,8 +168,9 @@ export async function ingestOrder(
   const rowId = await upsertMinimalOrder(order, supabase);
 
   if (rowId) {
-    // Fire-and-forget: enrich in background, don't await
-    void enrichOrderDetail(order.platform_order_id, accessToken, supabase);
+    // Await enrichment — callers run inside after() so latency is fine.
+    // Awaiting gives us complete logs and ensures detail is written before function exits.
+    await enrichOrderDetail(order.platform_order_id, accessToken, supabase);
   }
 }
 
